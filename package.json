@@ -1,0 +1,28 @@
+{
+  "name": "dsh-notify",
+  "version": "0.1.0",
+  "description": "DeepSeek Harness 的 Discord 通知与应答插件：把审批与提问推到 Discord，用按钮、下拉菜单和输入框直接作答。 / DSH notifications and answering over Discord: approvals and questions arrive with buttons, selects, and modals.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DWJZ/dsh-notify.git"
+  },
+  "homepage": "https://github.com/DWJZ/dsh-notify#readme",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "engines": {
+    "node": "^22.19 || >=24"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "scripts": {
+    "test": "node test/format.spec.mjs && node test/wiring.spec.mjs && node test/discord.spec.mjs && node test/gateway.spec.mjs && node test/components.spec.mjs && node test/twoway.spec.mjs && node test/annotate.spec.mjs",
+    "send:test": "node test/send-once.mjs"
+  }
+}
