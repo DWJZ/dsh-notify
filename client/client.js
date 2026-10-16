@@ -25,6 +25,27 @@ window.__ModuleLoader__.load({
 
 		const React = require("react");
 
+		//#region styles
+		const CSS_ID = "dsh-notify/styles.css";
+		if (typeof document !== "undefined" && document.querySelector('style[data-plugin-css="' + CSS_ID + '"]') === null) {
+			const tag = document.createElement("style");
+			tag.setAttribute("data-plugin-css", CSS_ID);
+			tag.textContent = [
+				".dshn_root{display:flex;flex-direction:column;gap:16px;padding:4px 2px 24px;color:var(--dsw-alias-label-primary);font-size:13px;line-height:1.6;max-width:640px}",
+				".dshn_card{display:flex;flex-direction:column;gap:12px;padding:16px;border:1px solid var(--dsw-alias-border-secondary);border-radius:12px;background:var(--dsw-alias-bg-elevated)}",
+				".dshn_title{font-weight:600;font-size:14px}",
+				".dshn_desc{color:var(--dsw-alias-label-secondary);white-space:pre-wrap}",
+				".dshn_row{display:flex;gap:8px}",
+				".dshn_key{color:var(--dsw-alias-label-tertiary);min-width:96px}",
+				".dshn_val{color:var(--dsw-alias-label-secondary);word-break:break-all}",
+				".dshn_actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}",
+				".dshn_hint{color:var(--dsw-alias-label-tertiary);font-size:12px}",
+				".dshn_state{font-size:12px;color:var(--dsw-alias-label-tertiary)}"
+			].join("");
+			document.head.appendChild(tag);
+		}
+		//#endregion
+
 		//#region locale
 		const NS = "dshNotify";
 		/** @type {Record<string, string>} */
@@ -38,6 +59,7 @@ window.__ModuleLoader__.load({
 			ask: "尚未询问",
 			enable: "启用通知",
 			enableHint: "浏览器要求由你的点击来授予权限，所以这一下必须你来点。",
+			osHint: "如果这里已允许、点了测试却没弹：系统的「通知」设置里要允许浏览器，专注模式／免打扰也会压掉它。",
 			test: "发一条测试通知",
 			testBody: "测试：这条是 dsh-notify 发的",
 			unsupported: "这个浏览器没有 Notification 接口，本机通知不可用。",
@@ -59,6 +81,7 @@ window.__ModuleLoader__.load({
 			ask: "not asked yet",
 			enable: "Enable notifications",
 			enableHint: "Browsers only grant this from your own click, so this one is yours to press.",
+			osHint: "Granted here but the test shows nothing? The system's own notification settings must allow the browser, and Focus/Do Not Disturb suppresses them.",
 			test: "Send a test notification",
 			testBody: "Test: this one came from dsh-notify",
 			unsupported: "This browser has no Notification interface, so local notices are unavailable.",
@@ -82,6 +105,19 @@ window.__ModuleLoader__.load({
 
 		/** Whether this browser can show a notification at all. */
 		const supported = () => typeof Notification !== "undefined";
+
+		/**
+		 * Whether the window is in front of the person right now.
+		 *
+		 * Focus, not tab visibility: on a desktop, clicking another application or
+		 * another window leaves this tab `visible`, and that is exactly the moment a
+		 * completion notice is wanted. Hidden is the fallback for a document that
+		 * cannot report focus.
+		 * @returns true when the window has focus and the notice would be redundant.
+		 */
+		const inFront = () => (typeof document.hasFocus === "function"
+			? document.hasFocus()
+			: document.visibilityState === "visible");
 
 		/**
 		 * Show one notification, unless the window is in front of the person already.
@@ -141,6 +177,7 @@ window.__ModuleLoader__.load({
 					React.createElement("button", { type: "button", onClick: test, disabled: permission !== "granted" }, t("test")),
 				),
 				React.createElement("div", { className: "dshn_hint" }, t("enableHint")),
+				React.createElement("div", { className: "dshn_hint" }, t("osHint")),
 				notice === "" ? null : React.createElement("div", { className: "dshn_state" }, notice),
 			);
 		}
@@ -187,7 +224,7 @@ window.__ModuleLoader__.load({
 						const was = running.get(id);
 						running.set(id, isRunning);
 						if (was !== true || isRunning) continue;
-						if (document.visibilityState === "visible") continue;
+						if (inFront()) continue;
 						const key = STATUS_KEYS[reasons.get(id)?.kind] ?? "statusOther";
 						show(t, byId[id]?.displayTitle ?? id, t("body", { status: t(key) }), id);
 					}

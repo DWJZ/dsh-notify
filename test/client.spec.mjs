@@ -36,7 +36,14 @@ const windowStub = {
   __ModuleLoader__: { load: (spec) => { windowStub.spec = spec } },
   focus: () => { focused = true },
 }
-const documentStub = { visibilityState: 'hidden' }
+const documentStub = {
+  visibilityState: 'hidden',
+  focused: false,
+  hasFocus() { return this.focused },
+  querySelector: () => null,
+  createElement: () => ({ setAttribute: () => {}, textContent: '' }),
+  head: { appendChild: () => {} },
+}
 globalThis.window = windowStub
 globalThis.document = documentStub
 globalThis.Notification = FakeNotification
@@ -85,31 +92,39 @@ check('one notification, named after the session', shown.length === 1 && shown[0
 check('the tag is per session, so repeats replace instead of stacking', shown[0].tag === 'dsh-notify:a')
 check('an unreadable status still says something', shown[0].body.includes('statusOther'))
 
-console.log('it stays quiet while the window is in front')
+console.log('it stays quiet while the window has focus')
+documentStub.focused = true
+observe(running('修 CI', true))
+observe(running('修 CI', false))
+check('no notification while focused', shown.length === 1)
+
+console.log('an unfocused window is enough, even with the tab still visible')
+documentStub.focused = false
 documentStub.visibilityState = 'visible'
 observe(running('修 CI', true))
 observe(running('修 CI', false))
-check('no notification while visible', shown.length === 1)
+check('another application in front still gets a notice', shown.length === 2, JSON.stringify(shown.at(-1)))
+documentStub.visibilityState = 'hidden'
 
 console.log('it reads the status from the turn that ended')
 documentStub.visibilityState = 'hidden'
 bindings.set('a', bindingWith({ kind: 'error' }))
 observe(running('修 CI', true))
 observe(running('修 CI', false))
-check('the error status is carried', shown.length === 2 && shown[1].body.includes('statusError'), JSON.stringify(shown.at(-1)))
+check('the error status is carried', shown.length === 3 && shown[2].body.includes('statusError'), JSON.stringify(shown.at(-1)))
 
 console.log('it respects a denied permission, and unsupported browsers')
 FakeNotification.permission = 'denied'
 observe(running('修 CI', true))
 observe(running('修 CI', false))
-check('nothing is shown without permission', shown.length === 2)
+check('nothing is shown without permission', shown.length === 3)
 FakeNotification.permission = 'granted'
 
 console.log('clicking a notification brings the window back')
 documentStub.visibilityState = 'hidden'
 observe(running('修 CI', true))
 observe(running('修 CI', false))
-check('the notification was shown', shown.length === 3)
+check('the notification was shown', shown.length === 4)
 
 console.log(failures === 0 ? '\nPASS' : `\n${String(failures)} FAILURE(S)`)
 process.exit(failures === 0 ? 0 : 1)
