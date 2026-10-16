@@ -77,22 +77,66 @@ const TURN_STATUS = {
 }
 
 /**
+ * Longest request line a notice shows, and longest reply opening.
+ *
+ * The browser half uses the same two budgets, so a person reading the channel and a
+ * person reading the desktop notification see the same sentence. They are separate
+ * runtimes with no shared module, so the pair is kept here and there by hand.
+ */
+export const TURN_REQUEST_LIMIT = 70
+export const TURN_REPLY_LIMIT = 140
+
+/**
+ * Read the plain text one message event carries.
+ * @param data - the event payload, or a nested `message` carrying the blocks.
+ * @returns the joined text blocks, or the empty string.
+ */
+export function messageText(data) {
+  const blocks = Array.isArray(data?.content) ? data.content
+    : Array.isArray(data?.message?.content) ? data.message.content : null
+  if (blocks === null) return typeof data?.text === 'string' ? data.text : ''
+  return blocks
+    .filter(block => block?.type === 'text' && typeof block.text === 'string')
+    .map(block => block.text)
+    .join('\n')
+}
+
+/**
+ * Flatten one message into a single line, cut to what a notice can show.
+ * @param value - the raw message text.
+ * @param limit - the longest line to keep.
+ * @returns the line, or the empty string when the message said nothing.
+ */
+export function oneLine(value, limit) {
+  const flat = condense(value)
+  return flat.length <= limit ? flat : `${flat.slice(0, limit - 1)}…`
+}
+
+/**
  * Render the notification for a finished turn: which task it was, and how it ended.
+ *
+ * A notice describes the turn, not the conversation: the Session title names the
+ * conversation from its first message, which is not what just finished.
  * @param facts - the turn facts.
  * @param facts.session - the Session whose turn ended.
  * @param facts.reason - the `turn/end` reason: a `kind`, plus the error it names.
  * @param facts.label - the sender tag shown first.
  * @param facts.sessionLabel - pre-rendered session identity; falls back to the log header.
+ * @param facts.asked - the request this turn answered, when it was observed.
+ * @param facts.answered - the opening of the reply, when it was observed.
  * @returns the message body.
  */
-export function formatTurnEnd({ session, reason, label = 'DSH', sessionLabel }) {
+export function formatTurnEnd({ session, reason, label = 'DSH', sessionLabel, asked = '', answered = '' }) {
   const { shortId, project, title } = sessionFacts(session)
   const status = TURN_STATUS[reason?.kind] ?? '已结束'
   const detail = reason?.kind === 'error' ? condense(String(reason.error?.message ?? '')) : ''
+  const task = oneLine(asked, TURN_REQUEST_LIMIT)
+  const reply = oneLine(answered, TURN_REPLY_LIMIT)
   return [
-    `【${label}】一轮回答结束`,
-    `会话：${sessionLabel ?? fallbackLabel(title, project, shortId)}`,
+    task === '' ? `【${label}】一轮回答结束` : `【${label}】${task}`,
     `状态：${detail === '' ? status : `${status}：${detail}`}`,
+    `会话：${sessionLabel ?? fallbackLabel(title, project, shortId)}`,
+    ...reply === '' ? [] : [`回答：${reply}`],
   ].join('\n')
 }
 

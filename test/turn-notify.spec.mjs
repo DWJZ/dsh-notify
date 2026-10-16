@@ -20,17 +20,40 @@ const session = { id: 'session-0d7283cf-5423-4d06-877d-e29083ea730d', header: { 
 
 console.log('the text names the task and how it ended')
 check('a completed turn', formatTurnEnd({ session, reason: { kind: 'completed' }, sessionLabel: '修 CI' })
-  === '【DSH】一轮回答结束\n会话：修 CI\n状态：完成')
-check('an interrupted turn', formatTurnEnd({ session, reason: { kind: 'aborted' }, sessionLabel: '修 CI' }).endsWith('状态：被中断'))
-check('a blocked turn waits for the person', formatTurnEnd({ session, reason: { kind: 'blocked' }, sessionLabel: '修 CI' }).endsWith('状态：等待你处理'))
+  === '【DSH】一轮回答结束\n状态：完成\n会话：修 CI')
+check('an interrupted turn', formatTurnEnd({ session, reason: { kind: 'aborted' }, sessionLabel: '修 CI' }).includes('状态：被中断'))
+check('a blocked turn waits for the person', formatTurnEnd({ session, reason: { kind: 'blocked' }, sessionLabel: '修 CI' }).includes('状态：等待你处理'))
 check('an error carries its message', formatTurnEnd({
   session,
   reason: { kind: 'error', error: { message: 'provider refused  the  request' } },
   sessionLabel: '修 CI',
-}).endsWith('状态：出错：provider refused the request'))
-check('an unknown reason still ends the line', formatTurnEnd({ session, reason: undefined, sessionLabel: '修 CI' }).endsWith('状态：已结束'))
+}).includes('状态：出错：provider refused the request'))
+check('an unknown reason still ends the line', formatTurnEnd({ session, reason: undefined, sessionLabel: '修 CI' }).includes('状态：已结束'))
 check('the label is configurable', formatTurnEnd({ session, reason: { kind: 'completed' }, label: 'WTM', sessionLabel: 'x' }).startsWith('【WTM】'))
 check('without a label the project stands in', formatTurnEnd({ session, reason: { kind: 'completed' } }).includes('会话：project · session-0'))
+
+console.log('the notice describes the turn, like the desktop one')
+const described = formatTurnEnd({
+  session,
+  reason: { kind: 'completed' },
+  sessionLabel: '问候（deepseek-harness）',
+  asked: '把 CI 修好，\n顺便看下缓存键',
+  answered: '已修好：缓存的 key 少了 workspace 前缀。\n另外补了一个回归测试。',
+})
+check('the request heads it', described.startsWith('【DSH】把 CI 修好， 顺便看下缓存键'), JSON.stringify(described))
+check('the status comes next', described.includes('\n状态：完成\n'))
+check('the session still names the conversation', described.includes('会话：问候（deepseek-harness）'))
+check('and the reply opening closes it', described.endsWith('\n回答：已修好：缓存的 key 少了 workspace 前缀。 另外补了一个回归测试。'), JSON.stringify(described))
+const cut = formatTurnEnd({
+  session,
+  reason: { kind: 'completed' },
+  sessionLabel: 'x',
+  asked: 'x'.repeat(200),
+  answered: 'y'.repeat(400),
+}).split('\n')
+check('long text is cut to the same budgets the browser half uses',
+  cut[0] === `【DSH】${'x'.repeat(69)}…` && cut[3] === `回答：${'y'.repeat(139)}…`,
+  JSON.stringify(cut.map(line => line.length)))
 
 console.log('the plugin posts one message per finished turn')
 const delivered = []
@@ -49,8 +72,12 @@ check('and can be turned off', resolveConfig({ discordWebhookUrl: 'https://examp
 
 apply(ctx, { discordWebhookUrl: 'https://example.test/hook', turnNotify: true }, { channels: [channel] })
 check('the plugin subscribed to Session events', ctx.listeners.length === 1)
+ctx.listeners[0](session, { type: 'user/message', data: { content: [{ type: 'text', text: '把 CI 修好，\n顺便看下缓存键' }] } })
+ctx.listeners[0](session, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '已修好：缓存的 key 少了 workspace 前缀。' }] } } })
 ctx.listeners[0](session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
-check('a finished turn is announced', delivered.length === 1 && delivered[0].includes('一轮回答结束'), JSON.stringify(delivered))
+check('a finished turn is announced', delivered.length === 1 && delivered[0].includes('一轮回答结束') === false, JSON.stringify(delivered))
+check('the notice names the request that finished', delivered[0].includes('把 CI 修好'), JSON.stringify(delivered))
+check('and the reply that answered it', delivered[0].includes('已修好：缓存的 key'), JSON.stringify(delivered))
 ctx.listeners[0](session, { type: 'step/end' })
 check('other events stay silent', delivered.length === 1)
 

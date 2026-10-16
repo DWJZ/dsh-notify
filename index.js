@@ -22,7 +22,7 @@ import {
 } from './components.js'
 import { approvalFromReply, answerFromReply, createReplyPoller, makeCode, parseReply } from './discord.js'
 import { createGateway } from './gateway.js'
-import { createAnnouncer, createChannels, formatApproval, formatQuestions, formatTurnEnd, sessionFacts } from './notify.js'
+import { createAnnouncer, createChannels, formatApproval, formatQuestions, formatTurnEnd, messageText, oneLine, sessionFacts, TURN_REPLY_LIMIT, TURN_REQUEST_LIMIT } from './notify.js'
 
 const API = 'https://discord.com/api/v10'
 
@@ -572,10 +572,32 @@ export function apply(ctx, raw, deps = {}) {
   // half shows a desktop notification, and this one says the same thing in the channel
   // that already carries approvals.
   if (config.turnNotify) {
+    /** Last observed request and reply per Session, for the next completion notice. */
+    const asked = new Map()
+    const answered = new Map()
     ctx.on('session/event', (session, event) => {
+      const id = session?.id
+      if (typeof id !== 'string') return
+      if (event?.type === 'user/message') {
+        const text = oneLine(messageText(event.data), TURN_REQUEST_LIMIT)
+        if (text !== '') asked.set(id, text)
+        return
+      }
+      if (event?.type === 'assistant/message') {
+        const text = oneLine(messageText(event.data), TURN_REPLY_LIMIT)
+        if (text !== '') answered.set(id, text)
+        return
+      }
       if (event?.type !== 'turn/end') return
       try {
-        deliverTo(turnChannels, formatTurnEnd({ session, reason: event.data?.reason, label: config.label, sessionLabel: sessionLabel(session) }), 'the turn result')
+        deliverTo(turnChannels, formatTurnEnd({
+          session,
+          reason: event.data?.reason,
+          label: config.label,
+          sessionLabel: sessionLabel(session),
+          asked: asked.get(id) ?? '',
+          answered: answered.get(id) ?? '',
+        }), 'the turn result')
       } catch (failure) {
         ctx.logger.warn(`dsh-notify: turn notification failed: ${String(failure)}`)
       }
