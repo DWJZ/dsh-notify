@@ -11,18 +11,40 @@
   "type": "module",
   "main": "index.js",
   "exports": {
-    ".": "./index.js"
+    ".": "./index.js",
+    "./client": "./client/client.js",
+    "./package.json": "./package.json"
   },
+  "files": [
+    "index.js",
+    "notify.js",
+    "discord.js",
+    "gateway.js",
+    "components.js",
+    "client",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": "^22.19 || >=24"
   },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
     }
   },
   "scripts": {
-    "test": "node test/format.spec.mjs && node test/wiring.spec.mjs && node test/discord.spec.mjs && node test/gateway.spec.mjs && node test/components.spec.mjs && node test/twoway.spec.mjs && node test/annotate.spec.mjs",
+    "test": "node test/format.spec.mjs && node test/turn-notify.spec.mjs && node test/wiring.spec.mjs && node test/discord.spec.mjs && node test/gateway.spec.mjs && node test/components.spec.mjs && node test/twoway.spec.mjs && node test/annotate.spec.mjs && node test/client.spec.mjs",
     "send:test": "node test/send-once.mjs"
   }
 }

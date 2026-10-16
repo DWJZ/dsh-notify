@@ -14,6 +14,7 @@
 #   pollIntervalMs         轮询间隔，默认 3000
 #   label                  消息首行标识，默认 DSH
 #   ttlMs / minGapMs       去重与限速
+#   turnNotify: false      不再通知"一轮回答结束"（默认开）
 #   enabled: false         临时关掉
 - insert:
     - id: dsh-notify

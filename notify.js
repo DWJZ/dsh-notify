@@ -57,6 +57,46 @@ export function sessionFacts(session) {
 }
 
 /**
+ * Name one Session the way a message should show it when nothing pre-rendered it.
+ * @param title - durable title, empty until the Host projects one.
+ * @param project - project basename from the log header.
+ * @param shortId - first segment of the Session id.
+ * @returns the one-line identity.
+ */
+function fallbackLabel(title, project, shortId) {
+  if (title === '') return project === '' ? shortId : `${project} · ${shortId}`
+  return project === '' ? title : `${title}（${project}）`
+}
+
+/** Every way a turn can end, as the notification should say it. */
+const TURN_STATUS = {
+  completed: '完成',
+  blocked: '等待你处理',
+  aborted: '被中断',
+  error: '出错',
+}
+
+/**
+ * Render the notification for a finished turn: which task it was, and how it ended.
+ * @param facts - the turn facts.
+ * @param facts.session - the Session whose turn ended.
+ * @param facts.reason - the `turn/end` reason: a `kind`, plus the error it names.
+ * @param facts.label - the sender tag shown first.
+ * @param facts.sessionLabel - pre-rendered session identity; falls back to the log header.
+ * @returns the message body.
+ */
+export function formatTurnEnd({ session, reason, label = 'DSH', sessionLabel }) {
+  const { shortId, project, title } = sessionFacts(session)
+  const status = TURN_STATUS[reason?.kind] ?? '已结束'
+  const detail = reason?.kind === 'error' ? condense(String(reason.error?.message ?? '')) : ''
+  return [
+    `【${label}】一轮回答结束`,
+    `会话：${sessionLabel ?? fallbackLabel(title, project, shortId)}`,
+    `状态：${detail === '' ? status : `${status}：${detail}`}`,
+  ].join('\n')
+}
+
+/**
  * Render the notification for a pending approval.
  * @param facts - the request facts.
  * @param facts.session - the Session awaiting the decision.
@@ -74,7 +114,7 @@ export function formatApproval({ session, toolName, reason, displayReason, label
   const detail = condense(localized ?? reason ?? '')
   return [
     `【${label}】需要你确认`,
-    `会话：${sessionLabel ?? (title === '' ? `${project === '' ? '' : `${project} · `}${shortId}` : `${title}${project === '' ? '' : `（${project}）`}`)}`,
+    `会话：${sessionLabel ?? fallbackLabel(title, project, shortId)}`,
     `事项：${toolName === '' ? '待确认的操作' : toolName}`,
     ...detail === '' ? [] : [`详情：${detail}`],
   ].join('\n')
@@ -100,7 +140,7 @@ export function formatQuestions({ session, questions, label = 'DSH', sessionLabe
   })
   return [
     `【${label}】在等你选择`,
-    `会话：${sessionLabel ?? (title === '' ? `${project === '' ? '' : `${project} · `}${shortId}` : `${title}${project === '' ? '' : `（${project}）`}`)}`,
+    `会话：${sessionLabel ?? fallbackLabel(title, project, shortId)}`,
     ...list.length > 3 ? [`共 ${String(list.length)} 个问题，前三个：`] : [],
     ...lines,
   ].join('\n')

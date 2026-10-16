@@ -22,7 +22,7 @@ import {
 } from './components.js'
 import { approvalFromReply, answerFromReply, createReplyPoller, makeCode, parseReply } from './discord.js'
 import { createGateway } from './gateway.js'
-import { createAnnouncer, createChannels, formatApproval, formatQuestions, sessionFacts } from './notify.js'
+import { createAnnouncer, createChannels, formatApproval, formatQuestions, formatTurnEnd, sessionFacts } from './notify.js'
 
 const API = 'https://discord.com/api/v10'
 
@@ -112,6 +112,7 @@ export function resolveConfig(raw) {
     discordAllowedUserId: text(source.discordAllowedUserId),
     label: text(source.label) === '' ? 'DSH' : text(source.label),
     components: source.components !== false,
+    turnNotify: source.turnNotify !== false,
     ttlMs: Number.isInteger(source.ttlMs) && source.ttlMs >= 0 ? source.ttlMs : 300_000,
     minGapMs: Number.isInteger(source.minGapMs) && source.minGapMs >= 0 ? source.minGapMs : 2_000,
     replyWindowMs: Number.isInteger(source.replyWindowMs) && source.replyWindowMs >= 0
@@ -532,6 +533,20 @@ export function apply(ctx, raw, deps = {}) {
       return delegated
     }
   })
+
+  // A finished turn is the other thing worth interrupting a person for: the browser
+  // half shows a desktop notification, and this one says the same thing in the channel
+  // that already carries approvals.
+  if (config.turnNotify) {
+    ctx.on('session/event', (session, event) => {
+      if (event?.type !== 'turn/end') return
+      try {
+        announce(formatTurnEnd({ session, reason: event.data?.reason, label: config.label, sessionLabel: sessionLabel(session) }), 'the turn result')
+      } catch (failure) {
+        ctx.logger.warn(`dsh-notify: turn notification failed: ${String(failure)}`)
+      }
+    })
+  }
 
   ctx.on('user-questions/request', (request, next) => {
     const delegated = next()
