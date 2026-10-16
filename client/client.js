@@ -63,7 +63,7 @@ window.__ModuleLoader__.load({
 			test: "发一条测试通知",
 			testBody: "测试：这条是 dsh-notify 发的",
 			unsupported: "这个浏览器没有 Notification 接口，本机通知不可用。",
-			body: "状态：{status}",
+			body: "状态：{status} · {session}",
 			statusCompleted: "完成",
 			statusBlocked: "等待你处理",
 			statusAborted: "被中断",
@@ -85,7 +85,7 @@ window.__ModuleLoader__.load({
 			test: "Send a test notification",
 			testBody: "Test: this one came from dsh-notify",
 			unsupported: "This browser has no Notification interface, so local notices are unavailable.",
-			body: "Status: {status}",
+			body: "Status: {status} · {session}",
 			statusCompleted: "completed",
 			statusBlocked: "waiting for you",
 			statusAborted: "interrupted",
@@ -102,6 +102,34 @@ window.__ModuleLoader__.load({
 			aborted: "statusAborted",
 			error: "statusError",
 		};
+
+		/**
+		 * Read the plain text one message event carries.
+		 * @param data - the event payload, or a nested `message` carrying the blocks.
+		 * @returns the joined text blocks, or the empty string.
+		 */
+		function textOf(data) {
+			const blocks = Array.isArray(data?.content) ? data.content
+				: Array.isArray(data?.message?.content) ? data.message.content : null;
+			if (blocks === null) return typeof data?.text === "string" ? data.text : "";
+			return blocks
+				.filter(block => block?.type === "text" && typeof block.text === "string")
+				.map(block => block.text)
+				.join("\n");
+		}
+
+		/**
+		 * Flatten one message into a single line and remember it, when it says anything.
+		 * @param store - the per-session map to update.
+		 * @param id - the session the message belongs to.
+		 * @param value - the raw message text.
+		 * @param limit - the longest line the notification can show.
+		 */
+		function remember(store, id, value, limit) {
+			const flat = String(value ?? "").replace(/\s+/gu, " ").trim();
+			if (flat === "") return;
+			store.set(id, flat.length <= limit ? flat : `${flat.slice(0, limit - 1)}…`);
+		}
 
 		/** Whether this browser can show a notification at all. */
 		const supported = () => typeof Notification !== "undefined";
@@ -207,6 +235,9 @@ window.__ModuleLoader__.load({
 				const running = new Map();
 				/** Last `turn/end` reason per session, when a binding was available. */
 				const reasons = new Map();
+				/** Last thing the person asked in this session, and the last thing said back. */
+				const asked = new Map();
+				const answered = new Map();
 				/** Live binding subscriptions, keyed by session. */
 				const stops = new Map();
 
@@ -219,6 +250,8 @@ window.__ModuleLoader__.load({
 						if (change.kind !== "append") return;
 						for (const { event } of change.entries) {
 							if (event.type === "turn/end") reasons.set(id, event.data?.reason);
+							else if (event.type === "user/message") remember(asked, id, textOf(event.data), 70);
+							else if (event.type === "assistant/message") remember(answered, id, textOf(event.data), 140);
 						}
 					}));
 				};
@@ -233,7 +266,14 @@ window.__ModuleLoader__.load({
 						if (was !== true || isRunning) continue;
 						if (inFront()) continue;
 						const key = STATUS_KEYS[reasons.get(id)?.kind] ?? "statusOther";
-						show(t, byId[id]?.displayTitle ?? id, t("body", { status: t(key) }), id);
+						// The Session title names the conversation from its first message, which is
+						// not what just finished. The turn itself is: the request heads the notice,
+						// and the reply's opening line follows the status.
+						const label = byId[id]?.displayTitle ?? id;
+						const heading = asked.get(id) ?? label;
+						const body = t("body", { status: t(key), session: label });
+						const summary = answered.get(id);
+						show(t, heading, summary === undefined ? body : `${body}\n${summary}`, id);
 					}
 				};
 

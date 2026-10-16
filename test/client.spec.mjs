@@ -61,14 +61,27 @@ check('it injects the sessions, locale and slots services',
   ['sessions', 'locale', 'slots'].every(name => exports.inject.includes(name)), JSON.stringify(exports.inject))
 
 const listListeners = []
-const bindings = new Map()
+const streams = new Map()
+const streamListeners = []
+const bindingFor = (id) => ({
+  eventSource: {
+    getSnapshot: () => ({ change: { kind: 'append', entries: (streams.get(id) ?? []).map(event => ({ event })) } }),
+    subscribe: (fn) => { streamListeners.push(fn); fn(); return () => {} },
+  },
+})
+/** Re-read every bound stream after the test changed what it carries. */
+const pulse = () => { for (const fn of streamListeners) fn() }
 let snapshot = { ids: [], byId: {} }
 const ctx = {
   effect: (fn) => { fn(); return () => {} },
-  locale: { register: () => {}, bind: () => (key, vars) => (vars === undefined ? key : `${key}:${JSON.stringify(vars)}`) },
+  locale: { register: () => {}, bind: () => (key, vars) => {
+    if (vars === undefined) return key
+    const rest = Object.entries(vars).map(([name, value]) => `${name}=${value}`).join(' ')
+    return `${key}:${rest}`
+  } },
   sessions: {
     list: { getSnapshot: () => snapshot, subscribe: (fn) => { listListeners.push(fn); return () => {} } },
-    binding: (id) => bindings.get(id),
+    binding: (id) => (streams.has(id) ? bindingFor(id) : undefined),
   },
   slots: { inject: () => {}, register: () => () => {} },
 }
@@ -78,12 +91,8 @@ check('it subscribed to the session list', listListeners.length === 1)
 
 const observe = (next) => { snapshot = next; listListeners[0]() }
 const running = (title, isRunning) => ({ ids: ['a'], byId: { a: { displayTitle: title, running: isRunning } } })
-const bindingWith = (reason) => ({
-  eventSource: {
-    getSnapshot: () => ({ change: { kind: 'append', entries: [{ event: { type: 'turn/end', data: { reason } } }] } }),
-    subscribe: (fn) => { fn(); return () => {} },
-  },
-})
+/** Publish one session's stream, then let the bound subscription see it. */
+const feed = (events) => { streams.set('a', events); pulse() }
 
 console.log('it notifies when a turn ends out of sight')
 observe(running('修 CI', true))
@@ -114,7 +123,7 @@ documentStub.visibilityState = 'hidden'
 
 console.log('it reads the status from the turn that ended')
 documentStub.visibilityState = 'hidden'
-bindings.set('a', bindingWith({ kind: 'error' }))
+feed([{ type: 'turn/end', data: { reason: { kind: 'error' } } }])
 observe(running('修 CI', true))
 observe(running('修 CI', false))
 check('the error status is carried', shown.length === 3 && shown[2].body.includes('statusError'), JSON.stringify(shown.at(-1)))
@@ -131,6 +140,35 @@ documentStub.visibilityState = 'hidden'
 observe(running('修 CI', true))
 observe(running('修 CI', false))
 check('the notification was shown', shown.length === 4)
+
+console.log('the notice describes the turn, not the conversation name')
+feed([
+  { type: 'user/message', data: { content: [{ type: 'text', text: '把 CI 修好，\n顺便看下缓存键' }] } },
+  {
+    type: 'assistant/message',
+    data: { message: { content: [{ type: 'text', text: '已修好：缓存的 key 少了 workspace 前缀。\n另外补了一个回归测试。' }] } },
+  },
+  { type: 'turn/end', data: { reason: { kind: 'completed' } } },
+])
+observe(running('问候', true))
+observe(running('问候', false))
+const last = shown.at(-1)
+check('the request heads the notice', last.title === '把 CI 修好， 顺便看下缓存键', JSON.stringify(last.title))
+check('the status repeats which conversation it was', last.body.includes('session'), JSON.stringify(last.body))
+check('the reply opening follows the status', last.body.includes('已修好：缓存的 key 少了 workspace 前缀。'), JSON.stringify(last.body))
+check('and both stay on one line each', last.body.split('\n').length === 2, JSON.stringify(last.body))
+
+console.log('long text is cut to what a notification can show')
+feed([
+  { type: 'user/message', data: { content: [{ type: 'text', text: 'x'.repeat(200) }] } },
+  { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: 'y'.repeat(400) }] } } },
+  { type: 'turn/end', data: { reason: { kind: 'completed' } } },
+])
+observe(running('问候', true))
+observe(running('问候', false))
+const cut = shown.at(-1)
+check('the request keeps its budget', cut.title.length === 70 && cut.title.endsWith('…'), String(cut.title.length))
+check('the reply keeps its budget', cut.body.split('\n')[1].length === 140, String(cut.body.split('\n')[1].length))
 
 console.log(failures === 0 ? '\nPASS' : `\n${String(failures)} FAILURE(S)`)
 process.exit(failures === 0 ? 0 : 1)
