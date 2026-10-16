@@ -29,13 +29,29 @@ const API = 'https://discord.com/api/v10'
 /** Plugin name, as the Loader reports it. */
 export const name = 'dsh-notify'
 
+/** Discord message flag that keeps a message quiet: delivered, unread, no notification. */
+const SILENT_FLAG = 1 << 12
+
 /** Post one message as the bot, so it can carry components and be edited later. */
-export async function postAsBot({ token, channelId, text, components, fetchImpl = fetch }) {
+/**
+ * Post one message as the bot.
+ *
+ * `silent` sets Discord's `SUPPRESS_NOTIFICATIONS` flag: the message still lands in
+ * the channel and still marks it unread, but it does not raise a push or desktop
+ * notification. Completion notices use it — one per turn is a running commentary,
+ * not something to interrupt a person for — while approvals and questions keep
+ * notifying, because those are the ones waiting on an answer.
+ * @param options - bot token, channel, text, optional controls, and the silent flag.
+ * @returns the created message id, or the failure.
+ */
+export async function postAsBot({ token, channelId, text, components, silent = false, fetchImpl = fetch }) {
   try {
+    const payload = components === undefined ? { content: text } : { content: text, components }
+    if (silent) payload.flags = SILENT_FLAG
     const response = await fetchImpl(`${API}/channels/${channelId}/messages`, {
       method: 'POST',
       headers: { authorization: `Bot ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify(components === undefined ? { content: text } : { content: text, components }),
+      body: JSON.stringify(payload),
       signal: AbortSignal.timeout(10_000),
     })
     if (!response.ok) {
@@ -162,6 +178,7 @@ export function apply(ctx, raw, deps = {}) {
           token: config.discordBotToken,
           channelId: config.discordChannelId,
           text,
+          silent: true,
         }),
       }]
     : channels)

@@ -88,6 +88,10 @@ try {
   const posted = calls.filter(call => call.url.endsWith('/channels/channel-id/messages'))
   check('the bot channel received the notice', posted.length === 1, JSON.stringify(calls.map(call => call.url)))
   check('and it carries the finished-turn text', (posted[0]?.body ?? '').includes('一轮回答结束'), (posted[0]?.body ?? '').slice(0, 80))
+  // One notice per turn is a running commentary: it belongs in the channel, but it
+  // must not raise a notification the way an approval does.
+  check('and asks Discord to deliver it without notifying',
+    (posted[0]?.body ?? '').includes(`"flags":${String(1 << 12)}`), (posted[0]?.body ?? '').slice(-60))
 } finally {
   globalThis.fetch = realFetch
 }
