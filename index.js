@@ -151,14 +151,28 @@ export function apply(ctx, raw, deps = {}) {
   // put a second, near-identical message in the same channel.
   const channels = deps.channels
     ?? createChannels({ ...config, discordWebhookUrl: config.answering ? '' : config.discordWebhookUrl })
+  // Turn notices carry no controls, so they do not go through the bot's decision
+  // path. With answering configured that path is the only one left — the webhook is
+  // deliberately blanked above, and announcing through it would duplicate every
+  // approval — so the notice gets its own bot delivery instead of sharing `channels`.
+  const turnChannels = deps.turnChannels ?? (config.answering
+    ? [{
+        name: 'discord-bot',
+        deliver: (text) => postAsBot({
+          token: config.discordBotToken,
+          channelId: config.discordChannelId,
+          text,
+        }),
+      }]
+    : channels)
   const shouldAnnounce = createAnnouncer({ ttlMs: config.ttlMs, minGapMs: config.minGapMs })
   /** Pending decisions by correlation code; a question entry owns its own progress. */
   const pending = new Map()
   let gatewayReady = false
 
   /** Post one body to every channel, reporting outcomes without failing the caller. */
-  const announce = (text, what) => {
-    for (const channel of channels) {
+  const deliverTo = (list, text, what) => {
+    for (const channel of list) {
       let sent
       try {
         sent = channel.deliver(text)
@@ -174,6 +188,9 @@ export function apply(ctx, raw, deps = {}) {
       })
     }
   }
+
+  /** Post one body to every configured destination. */
+  const announce = (text, what) => { deliverTo(channels, text, what) }
 
   /**
    * Name the Session the way the GUI does.
@@ -541,7 +558,7 @@ export function apply(ctx, raw, deps = {}) {
     ctx.on('session/event', (session, event) => {
       if (event?.type !== 'turn/end') return
       try {
-        announce(formatTurnEnd({ session, reason: event.data?.reason, label: config.label, sessionLabel: sessionLabel(session) }), 'the turn result')
+        deliverTo(turnChannels, formatTurnEnd({ session, reason: event.data?.reason, label: config.label, sessionLabel: sessionLabel(session) }), 'the turn result')
       } catch (failure) {
         ctx.logger.warn(`dsh-notify: turn notification failed: ${String(failure)}`)
       }
