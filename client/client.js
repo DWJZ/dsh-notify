@@ -124,7 +124,10 @@ window.__ModuleLoader__.load({
 		 *
 		 * `requireInteraction` is what keeps it there: a page-created notification is
 		 * otherwise withdrawn by the browser as soon as its tab becomes active again,
-		 * which is exactly when someone comes back to read it.
+		 * which is exactly when someone comes back to read it. `renotify` is its
+		 * counterpart: replacing a notification that carries the same tag is silent by
+		 * default, so a second finished turn would swap the old notice for the new one
+		 * without telling anyone.
 		 * @param t - this namespace's translate function.
 		 * @param title - the notification heading: which task this is.
 		 * @param body - the notification text.
@@ -133,7 +136,7 @@ window.__ModuleLoader__.load({
 		 */
 		function show(t, title, body, tag) {
 			if (!supported() || Notification.permission !== "granted") return false;
-			const notice = new Notification(title, { body, tag: `dsh-notify:${tag}`, requireInteraction: true });
+			const notice = new Notification(title, { body, tag: `dsh-notify:${tag}`, requireInteraction: true, renotify: true });
 			notice.onclick = () => {
 				window.focus();
 				notice.close();

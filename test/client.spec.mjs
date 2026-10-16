@@ -27,7 +27,7 @@ let focused = false
 class FakeNotification {
   static permission = 'granted'
   constructor(title, options) {
-    shown.push({ title, body: options?.body ?? '', tag: options?.tag ?? '', persistent: options?.requireInteraction === true })
+    shown.push({ title, body: options?.body ?? '', tag: options?.tag ?? '', persistent: options?.requireInteraction === true, renotify: options?.renotify === true })
     this.onclick = null
   }
   close() {}
@@ -93,6 +93,9 @@ check('the tag is per session, so repeats replace instead of stacking', shown[0]
 // Without this the browser withdraws the notice the moment the tab becomes active
 // again, which is when the person comes back to read it.
 check('the notice asks to stay until it is handled', shown[0].persistent === true, JSON.stringify(shown[0]))
+// A replacement carrying the same tag is silent by default, so without this a
+// second finished turn would swap the notice out without alerting anyone.
+check('and to alert again when it replaces the previous one', shown[0].renotify === true, JSON.stringify(shown[0]))
 check('an unreadable status still says something', shown[0].body.includes('statusOther'))
 
 console.log('it stays quiet while the window has focus')
