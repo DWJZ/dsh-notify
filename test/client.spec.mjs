@@ -27,7 +27,7 @@ let focused = false
 class FakeNotification {
   static permission = 'granted'
   constructor(title, options) {
-    shown.push({ title, body: options?.body ?? '', tag: options?.tag ?? '' })
+    shown.push({ title, body: options?.body ?? '', tag: options?.tag ?? '', persistent: options?.requireInteraction === true })
     this.onclick = null
   }
   close() {}
@@ -90,6 +90,9 @@ observe(running('修 CI', true))
 observe(running('修 CI', false))
 check('one notification, named after the session', shown.length === 1 && shown[0].title === '修 CI', JSON.stringify(shown))
 check('the tag is per session, so repeats replace instead of stacking', shown[0].tag === 'dsh-notify:a')
+// Without this the browser withdraws the notice the moment the tab becomes active
+// again, which is when the person comes back to read it.
+check('the notice asks to stay until it is handled', shown[0].persistent === true, JSON.stringify(shown[0]))
 check('an unreadable status still says something', shown[0].body.includes('statusOther'))
 
 console.log('it stays quiet while the window has focus')
