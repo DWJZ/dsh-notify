@@ -27,10 +27,11 @@ let focused = false
 class FakeNotification {
   static permission = 'granted'
   constructor(title, options) {
-    shown.push({ title, body: options?.body ?? '', tag: options?.tag ?? '', persistent: options?.requireInteraction === true, renotify: options?.renotify === true })
+    shown.push({ title, body: options?.body ?? '', tag: options?.tag ?? '', persistent: options?.requireInteraction === true, renotify: options?.renotify === true, notice: this })
     this.onclick = null
+    this.closed = false
   }
-  close() {}
+  close() { this.closed = true }
 }
 const windowStub = {
   __ModuleLoader__: { load: (spec) => { windowStub.spec = spec } },
@@ -57,10 +58,11 @@ check('the bundle registers itself under the plugin id', spec?.id === 'dsh-notif
 const React = { createElement: () => null, useState: () => [null, () => {}] }
 const exports = spec.factory((name) => (name === 'react' ? React : undefined))
 check('the client half exports apply and inject', typeof exports.apply === 'function' && Array.isArray(exports.inject))
-check('it injects the sessions, locale and slots services',
-  ['sessions', 'locale', 'slots'].every(name => exports.inject.includes(name)), JSON.stringify(exports.inject))
+check('it injects the sessions, locale, slots and workspace services',
+  ['sessions', 'locale', 'slots', 'uiWorkspace'].every(name => exports.inject.includes(name)), JSON.stringify(exports.inject))
 
 const listListeners = []
+const opened = []
 const streams = new Map()
 const streamListeners = []
 const bindingFor = (id) => ({
@@ -84,6 +86,7 @@ const ctx = {
     binding: (id) => (streams.has(id) ? bindingFor(id) : undefined),
   },
   slots: { inject: () => {}, register: () => () => {} },
+  uiWorkspace: { openSession: (id) => { opened.push(id) } },
 }
 exports.apply(ctx)
 check('it subscribed to the session list', listListeners.length === 1)
@@ -140,6 +143,15 @@ documentStub.visibilityState = 'hidden'
 observe(running('修 CI', true))
 observe(running('修 CI', false))
 check('the notification was shown', shown.length === 4)
+
+console.log('clicking a notification brings the window back to its Session')
+const clicked = shown.at(-1).notice
+focused = false
+opened.length = 0
+clicked.onclick()
+check('the window is focused', focused === true)
+check('the Session is opened', opened.join(',') === 'a', JSON.stringify(opened))
+check('and the notice is dismissed', clicked.closed === true)
 
 console.log('the notice describes the turn, not the conversation name')
 feed([

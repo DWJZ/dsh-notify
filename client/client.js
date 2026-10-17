@@ -160,13 +160,15 @@ window.__ModuleLoader__.load({
 		 * @param title - the notification heading: which task this is.
 		 * @param body - the notification text.
 		 * @param tag - replaces an earlier notification for the same session instead of stacking.
+		 * @param open - shows the Session this notice is about; runs after the window is focused.
 		 * @returns whether a notification was shown.
 		 */
-		function show(t, title, body, tag) {
+		function show(t, title, body, tag, open = () => {}) {
 			if (!supported() || Notification.permission !== "granted") return false;
 			const notice = new Notification(title, { body, tag: `dsh-notify:${tag}`, requireInteraction: true, renotify: true });
 			notice.onclick = () => {
 				window.focus();
+				open();
 				notice.close();
 			};
 			return true;
@@ -219,7 +221,7 @@ window.__ModuleLoader__.load({
 		//#endregion
 
 		//#region wiring
-		const inject = ["sessions", "locale", "slots"];
+		const inject = ["sessions", "locale", "slots", "uiWorkspace"];
 
 		/**
 		 * Watch every session the Host reports, and notify when one stops running
@@ -273,7 +275,7 @@ window.__ModuleLoader__.load({
 						const heading = asked.get(id) ?? label;
 						const body = t("body", { status: t(key), session: label });
 						const summary = answered.get(id);
-						show(t, heading, summary === undefined ? body : `${body}\n${summary}`, id);
+						show(t, heading, summary === undefined ? body : `${body}\n${summary}`, id, () => ctx.uiWorkspace.openSession(id));
 					}
 				};
 
