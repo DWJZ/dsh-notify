@@ -260,13 +260,19 @@ window.__ModuleLoader__.load({
 
 				const observe = () => {
 					const { ids, byId } = ctx.sessions.list.getSnapshot();
+					// The Session on screen is the one the main view retains, the same row the
+					// browser title reads. Only that one finishing under your eyes is redundant:
+					// a focused window still hears about every other Session, which is the whole
+					// point of running several.
+					const shown = Object.values(byId).find(row => (row.retainedBy?.mainView ?? 0) > 0)?.id;
+					const inFrontNow = inFront();
 					for (const id of ids) {
 						bind(id);
 						const isRunning = byId[id]?.running === true;
 						const was = running.get(id);
 						running.set(id, isRunning);
 						if (was !== true || isRunning) continue;
-						if (inFront()) continue;
+						if (inFrontNow && id === shown) continue;
 						const key = STATUS_KEYS[reasons.get(id)?.kind] ?? "statusOther";
 						// The Session title names the conversation from its first message, which is
 						// not what just finished. The turn itself is: the request heads the notice,

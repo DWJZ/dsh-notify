@@ -93,7 +93,18 @@ check('it subscribed to the session list', listListeners.length === 1)
 //#endregion
 
 const observe = (next) => { snapshot = next; listListeners[0]() }
-const running = (title, isRunning) => ({ ids: ['a'], byId: { a: { displayTitle: title, running: isRunning } } })
+const row = (id, title, isRunning, mainView = true) => ({
+  id,
+  displayTitle: title,
+  running: isRunning,
+  retainedBy: mainView ? { mainView: 1 } : {},
+})
+const running = (title, isRunning, mainView = true) => ({ ids: ['a'], byId: { a: row('a', title, isRunning, mainView) } })
+/// Two Sessions at once: `a` in the background, `b` on screen.
+const alongside = (aRunning, bRunning) => ({
+  ids: ['a', 'b'],
+  byId: { a: row('a', '修 CI', aRunning, false), b: row('b', '问候', bRunning, true) },
+})
 /** Publish one session's stream, then let the bound subscription see it. */
 const feed = (events) => { streams.set('a', events); pulse() }
 
@@ -181,6 +192,19 @@ observe(running('问候', false))
 const cut = shown.at(-1)
 check('the request keeps its budget', cut.title.length === 70 && cut.title.endsWith('…'), String(cut.title.length))
 check('the reply keeps its budget', cut.body.split('\n')[1].length === 140, String(cut.body.split('\n')[1].length))
+
+console.log('a focused window still hears about the Session it is not showing')
+documentStub.focused = true
+documentStub.visibilityState = 'visible'
+const before = shown.length
+observe(alongside(true, false))
+observe(alongside(false, false))
+check('the background Session notifies while you work in another one',
+  shown.length === before + 1 && shown.at(-1).tag === 'dsh-notify:a', JSON.stringify(shown.at(-1)))
+const quietStart = shown.length
+observe(alongside(false, true))
+observe(alongside(false, false))
+check('the Session on screen stays quiet', shown.length === quietStart, JSON.stringify(shown.at(-1)))
 
 console.log(failures === 0 ? '\nPASS' : `\n${String(failures)} FAILURE(S)`)
 process.exit(failures === 0 ? 0 : 1)
