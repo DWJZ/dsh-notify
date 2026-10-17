@@ -86,6 +86,22 @@ const TURN_STATUS = {
 export const TURN_REQUEST_LIMIT = 70
 export const TURN_REPLY_LIMIT = 140
 
+/** The goal round driver's own continuation prompt opens with this marker. */
+const GOAL_ROUND_MARKER = '<goal_round>'
+
+/**
+ * Whether one request came from a goal continuation rather than from a person.
+ *
+ * Those rounds run one after another unattended, so announcing each would bury the
+ * notices that matter. The browser half carries the same check, because it cannot
+ * import this module.
+ * @param text - the request text, already flattened.
+ * @returns true for a self-driven round.
+ */
+export function isGoalRound(text) {
+  return typeof text === 'string' && text.startsWith(GOAL_ROUND_MARKER)
+}
+
 /**
  * Read the plain text one message event carries.
  * @param data - the event payload, or a nested `message` carrying the blocks.

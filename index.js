@@ -22,7 +22,7 @@ import {
 } from './components.js'
 import { approvalFromReply, answerFromReply, createReplyPoller, makeCode, parseReply } from './discord.js'
 import { createGateway } from './gateway.js'
-import { createAnnouncer, createChannels, formatApproval, formatQuestions, formatTurnEnd, messageText, oneLine, sessionFacts, TURN_REPLY_LIMIT, TURN_REQUEST_LIMIT } from './notify.js'
+import { createAnnouncer, createChannels, formatApproval, formatQuestions, formatTurnEnd, isGoalRound, messageText, oneLine, sessionFacts, TURN_REPLY_LIMIT, TURN_REQUEST_LIMIT } from './notify.js'
 
 const API = 'https://discord.com/api/v10'
 
@@ -575,12 +575,22 @@ export function apply(ctx, raw, deps = {}) {
     /** Last observed request and reply per Session, for the next completion notice. */
     const asked = new Map()
     const answered = new Map()
+    /**
+     * Whether the turn running in a Session was started by a goal continuation.
+     *
+     * The round driver admits its own prompt, marked `<goal_round>…</goal_round>`
+     * (`packages/goal/goal-round-driver/src/prompt.ts`), and those rounds can run one
+     * after another unattended. Announcing each one would bury the notices that matter,
+     * so they stay silent; a turn the person actually started still speaks.
+     */
+    const selfDriven = new Map()
     ctx.on('session/event', (session, event) => {
       const id = session?.id
       if (typeof id !== 'string') return
       if (event?.type === 'user/message') {
         const text = oneLine(messageText(event.data), TURN_REQUEST_LIMIT)
         if (text !== '') asked.set(id, text)
+        selfDriven.set(id, isGoalRound(text))
         return
       }
       if (event?.type === 'assistant/message') {
@@ -589,6 +599,7 @@ export function apply(ctx, raw, deps = {}) {
         return
       }
       if (event?.type !== 'turn/end') return
+      if (selfDriven.get(id) === true) return
       try {
         deliverTo(turnChannels, formatTurnEnd({
           session,

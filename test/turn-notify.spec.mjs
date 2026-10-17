@@ -81,6 +81,14 @@ check('and the reply that answered it', delivered[0].includes('已修好：缓�
 ctx.listeners[0](session, { type: 'step/end' })
 check('other events stay silent', delivered.length === 1)
 
+console.log('a goal continuation stays silent')
+ctx.listeners[0](session, { type: 'user/message', data: { content: [{ type: 'text', text: '<goal_round>\nround 2\n</goal_round>' }] } })
+ctx.listeners[0](session, { type: 'turn/end', data: { turn: 2, reason: { kind: 'completed' } } })
+check('no message for a self-driven round', delivered.length === 1, JSON.stringify(delivered.at(-1)))
+ctx.listeners[0](session, { type: 'user/message', data: { content: [{ type: 'text', text: '继续' }] } })
+ctx.listeners[0](session, { type: 'turn/end', data: { turn: 3, reason: { kind: 'completed' } } })
+check('and the next turn a person started speaks again', delivered.length === 2, JSON.stringify(delivered))
+
 const quiet = { logger: { info: () => {}, warn: () => {} }, on: (name, listener) => { if (name === 'session/event') quiet.listeners.push(listener); return () => {} }, get: () => undefined, listeners: [] }
 apply(quiet, { discordWebhookUrl: 'https://example.test/hook', turnNotify: false }, { channels: [channel] })
 check('turning the switch off removes the listener', quiet.listeners.length === 0)

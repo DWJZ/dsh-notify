@@ -240,6 +240,8 @@ window.__ModuleLoader__.load({
 				/** Last thing the person asked in this session, and the last thing said back. */
 				const asked = new Map();
 				const answered = new Map();
+				/** Whether the current turn was admitted by a goal continuation, not by a person. */
+				const selfDriven = new Map();
 				/** Live binding subscriptions, keyed by session. */
 				const stops = new Map();
 
@@ -252,7 +254,13 @@ window.__ModuleLoader__.load({
 						if (change.kind !== "append") return;
 						for (const { event } of change.entries) {
 							if (event.type === "turn/end") reasons.set(id, event.data?.reason);
-							else if (event.type === "user/message") remember(asked, id, textOf(event.data), 70);
+							else if (event.type === "user/message") {
+								remember(asked, id, textOf(event.data), 70);
+								// The goal round driver admits its own prompt, marked
+								// `<goal_round>…</goal_round>`; those rounds chain on their own, so
+								// announcing each would bury the notices that matter.
+								selfDriven.set(id, String(textOf(event.data)).trim().startsWith("<goal_round>"));
+							}
 							else if (event.type === "assistant/message") remember(answered, id, textOf(event.data), 140);
 						}
 					}));
@@ -273,6 +281,7 @@ window.__ModuleLoader__.load({
 						running.set(id, isRunning);
 						if (was !== true || isRunning) continue;
 						if (inFrontNow && id === shown) continue;
+						if (selfDriven.get(id) === true) continue;
 						const key = STATUS_KEYS[reasons.get(id)?.kind] ?? "statusOther";
 						// The Session title names the conversation from its first message, which is
 						// not what just finished. The turn itself is: the request heads the notice,

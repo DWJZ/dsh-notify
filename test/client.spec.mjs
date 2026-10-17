@@ -206,5 +206,24 @@ observe(alongside(false, true))
 observe(alongside(false, false))
 check('the Session on screen stays quiet', shown.length === quietStart, JSON.stringify(shown.at(-1)))
 
+
+console.log('a goal continuation does not notify')
+documentStub.focused = false
+documentStub.visibilityState = 'visible'
+const beforeGoal = shown.length
+feed([
+  { type: 'user/message', data: { content: [{ type: 'text', text: '<goal_round>\nround 2\n</goal_round>' }] } },
+  { type: 'turn/end', data: { reason: { kind: 'completed' } } },
+])
+observe(running('修 CI', true))
+observe(running('修 CI', false))
+check('no notice for a self-driven round', shown.length === beforeGoal, JSON.stringify(shown.at(-1)))
+feed([
+  { type: 'user/message', data: { content: [{ type: 'text', text: '继续' }] } },
+  { type: 'turn/end', data: { reason: { kind: 'completed' } } },
+])
+observe(running('修 CI', true))
+observe(running('修 CI', false))
+check('and the next turn a person started notifies again', shown.length === beforeGoal + 1, JSON.stringify(shown.at(-1)))
 console.log(failures === 0 ? '\nPASS' : `\n${String(failures)} FAILURE(S)`)
 process.exit(failures === 0 ? 0 : 1)
