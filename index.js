@@ -157,56 +157,6 @@ export function resolveConfig(raw) {
  * @param raw - the Loader-supplied configuration.
  * @param deps - injectable collaborators for tests: `channels`, `startPoller`, `startGateway`.
  */
-/** Whether a request came from this machine, same origin, with no proxy in front. */
-function sameOriginLoopback(req) {
-  const address = req.socket?.remoteAddress
-  if (address !== '127.0.0.1' && address !== '::1' && address !== '::ffff:127.0.0.1') return false
-  if (req.headers.forwarded !== undefined
-    || req.headers['x-forwarded-for'] !== undefined
-    || req.headers['x-real-ip'] !== undefined) return false
-  const host = req.headers.host ?? ''
-  const origin = req.headers.origin
-  if (typeof origin !== 'string' || origin === '') return host !== ''
-  try { return new URL(origin).host === host } catch { return false }
-}
-
-/**
- * Answer `/dsh-notify/presence` with the browser's account of what it can see.
- *
- * @param presence - the state the turn notice reads; updated in place.
- * @returns a request handler that owns its response.
- */
-function presenceHandler(presence) {
-  return (req, res) => {
-    if (req.method !== 'POST') {
-      res.writeHead(405, { allow: 'POST' })
-      res.end()
-      return
-    }
-    if (!sameOriginLoopback(req)) {
-      res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' })
-      res.end('presence is limited to same-origin loopback requests')
-      return
-    }
-    let body = ''
-    req.setEncoding('utf8')
-    req.on('data', (chunk) => { body += chunk })
-    req.on('end', () => {
-      let payload
-      try { payload = JSON.parse(body === '' ? '{}' : body) } catch {
-        res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
-        res.end('invalid json')
-        return
-      }
-      presence.focused = payload?.focused === true
-      presence.shown = typeof payload?.shown === 'string' ? payload.shown : ''
-      presence.reported = true
-      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-      res.end(JSON.stringify({ ok: true }))
-    })
-  }
-}
-
 export function apply(ctx, raw, deps = {}) {
   const config = resolveConfig(raw)
   if (!config.enabled) {
@@ -221,11 +171,6 @@ export function apply(ctx, raw, deps = {}) {
   // path. With answering configured that path is the only one left — the webhook is
   // deliberately blanked above, and announcing through it would duplicate every
   // approval — so the notice gets its own bot delivery instead of sharing `channels`.
-  // What the browser reported about the window and the Session it shows. A turn the person
-  // is looking at must not also pop up on the phone, so the two notices share one decision.
-  const presence = { focused: false, shown: '', reported: false }
-  /** Whether the next turn notice is redundant: in front, on that very Session. */
-  const redundantTurn = (sessionId) => presence.focused === true && presence.shown === String(sessionId)
   const turnChannels = deps.turnChannels ?? (config.answering
     ? [{
         name: 'discord-bot',
@@ -237,24 +182,6 @@ export function apply(ctx, raw, deps = {}) {
         }),
       }]
     : channels)
-  /**
-   * Turn delivery that matches the browser.
-   *
-   * @param sessionId - the Session whose turn just ended.
-   * @returns channels that speak only when the browser would also speak.
-   */
-  const turnDelivery = (sessionId) => {
-    const redundant = redundantTurn(sessionId)
-    if (deps.turnChannels !== undefined) return turnChannels
-    if (config.answering) return [{ ...turnChannels[0], deliver: (text) => postAsBot({
-      token: config.discordBotToken,
-      channelId: config.discordChannelId,
-      text,
-      silent: redundant,
-    }) }]
-    // A webhook cannot be silenced per message, so a redundant turn is simply not posted.
-    return redundant ? [] : turnChannels
-  }
   const shouldAnnounce = createAnnouncer({ ttlMs: config.ttlMs, minGapMs: config.minGapMs })
   /** Pending decisions by correlation code; a question entry owns its own progress. */
   const pending = new Map()
@@ -674,7 +601,7 @@ export function apply(ctx, raw, deps = {}) {
       if (event?.type !== 'turn/end') return
       if (selfDriven.get(id) === true) return
       try {
-        deliverTo(turnDelivery(id), formatTurnEnd({
+        deliverTo(turnChannels, formatTurnEnd({
           session,
           reason: event.data?.reason,
           label: config.label,
@@ -687,17 +614,6 @@ export function apply(ctx, raw, deps = {}) {
       }
     })
   }
-
-  // The browser is the only party that knows what a person can already see, so it reports
-  // presence here and the Host applies that answer to the Discord notice. Same-origin and
-  // loopback only, like every other local control route.
-  ctx.inject(['webServer'], (webCtx) => {
-    webCtx.effect(() => webCtx.webServer.register({
-      kind: 'exact',
-      path: '/dsh-notify/presence',
-      handler: presenceHandler(presence),
-    }), 'dsh-notify: browser presence')
-  })
 
   ctx.on('user-questions/request', (request, next) => {
     const delegated = next()

@@ -43,8 +43,6 @@ function stubContext() {
     ctx: {
       on: (type, handler) => { listeners.set(type, handler) },
       logger: { info: () => {}, warn: () => {} },
-      inject: () => {},
-      get: () => undefined,
     },
   }
 }

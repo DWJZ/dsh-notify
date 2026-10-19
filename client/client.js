@@ -294,42 +294,9 @@ window.__ModuleLoader__.load({
 					}
 				};
 
-				/**
-				 * Tell the Host what this window can already see.
-				 *
-				 * The Host posts the Discord notice and cannot see the window, so the browser
-				 * reports the same two facts its own notice decision uses: whether the window has
-				 * focus, and which Session the main view shows. Both notices then agree.
-				 */
-				let reported = "";
-				const reportPresence = () => {
-					const { byId } = ctx.sessions.list.getSnapshot();
-					const shown = Object.values(byId).find(row => (row.retainedBy?.mainView ?? 0) > 0)?.id ?? "";
-					const next = JSON.stringify({ focused: inFront(), shown: String(shown) });
-					if (next === reported) return;
-					reported = next;
-					void fetch("/dsh-notify/presence", {
-						method: "POST",
-						headers: { "content-type": "application/json" },
-						body: next,
-					}).catch(() => { reported = "" });
-				};
-				reportPresence();
-				// Focus and blur are the only moments `hasFocus` changes without a Session update.
-				const onFocusChange = () => { void Promise.resolve().then(reportPresence) };
-				window.addEventListener("focus", onFocusChange);
-				window.addEventListener("blur", onFocusChange);
-				document.addEventListener("visibilitychange", onFocusChange);
-				const stopPresence = () => {
-					window.removeEventListener("focus", onFocusChange);
-					window.removeEventListener("blur", onFocusChange);
-					document.removeEventListener("visibilitychange", onFocusChange);
-				};
-
 				const stopList = ctx.sessions.list.subscribe(observe);
 				observe();
 				return () => {
-					stopPresence();
 					stopList();
 					for (const stop of stops.values()) stop();
 				};

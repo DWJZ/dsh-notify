@@ -29,9 +29,6 @@ function stubContext() {
         info: (line) => { logs.info.push(line) },
         warn: (line) => { logs.warn.push(line) },
       },
-      // The presence route mounts on the web host; these specs drive the delivery paths.
-      inject: () => {},
-      get: () => undefined,
     },
   }
 }
