@@ -28,7 +28,9 @@
     "LICENSE",
     "config.js",
     "web.js",
-    "discord-rest.js"
+    "discord-rest.js",
+    "labels.js",
+    "turns.js"
   ],
   "engines": {
     "node": "^22.19 || >=24"

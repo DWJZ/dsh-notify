@@ -24,8 +24,10 @@ import { approvalFromReply, answerFromReply, createReplyPoller, makeCode, parseR
 import { answerInteraction, editAsBot, postAsBot } from './discord-rest.js'
 import { createGateway } from './gateway.js'
 import { resolveConfig } from './config.js'
+import { createLabels } from './labels.js'
+import { watchTurns } from './turns.js'
 import { mountNoticeRoute } from './web.js'
-import { createAnnouncer, createChannels, formatApproval, formatQuestions, formatTurnNotice, isGoalRound, messageText, oneLine, sessionFacts, TURN_REPLY_LIMIT, TURN_REQUEST_LIMIT, UNGROUPED } from './notify.js'
+import { createAnnouncer, createChannels, formatApproval, formatQuestions } from './notify.js'
 
 /** Plugin name, as the Loader reports it. */
 export const name = 'dsh-notify'
@@ -36,51 +38,6 @@ export const name = 'dsh-notify'
  * @param raw - the Loader-supplied configuration.
  * @param deps - injectable collaborators for tests: `channels`, `startPoller`, `startGateway`.
  */
-
-/** Whether a request came from this machine, same origin, with no proxy in front. */
-function sameOriginLoopback(req) {
-  const address = req.socket?.remoteAddress
-  if (address !== '127.0.0.1' && address !== '::1' && address !== '::ffff:127.0.0.1') return false
-  if (req.headers.forwarded !== undefined
-    || req.headers['x-forwarded-for'] !== undefined
-    || req.headers['x-real-ip'] !== undefined) return false
-  const host = req.headers.host ?? ''
-  const origin = req.headers.origin
-  if (typeof origin !== 'string' || origin === '') return host !== ''
-  try { return new URL(origin).host === host } catch { return false }
-}
-
-/**
- * Answer `/dsh-notify/notice?session=<id>` with the newest composed notice.
- *
- * The browser composes nothing: it asks for the text the Host already sent to Discord, so
- * both surfaces always show the same sentence.
- * @param notices - the per-Session notice store.
- * @returns a request handler that owns its response.
- */
-function noticeHandler(notices) {
-  return (req, res) => {
-    if (req.method !== 'GET') {
-      res.writeHead(405, { allow: 'GET' })
-      res.end()
-      return
-    }
-    if (!sameOriginLoopback(req)) {
-      res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' })
-      res.end('notices are limited to same-origin loopback requests')
-      return
-    }
-    const url = new URL(req.url ?? '/', 'http://127.0.0.1')
-    const notice = notices.get(url.searchParams.get('session') ?? '')
-    if (notice === undefined) {
-      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
-      res.end('no notice for that session')
-      return
-    }
-    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
-    res.end(JSON.stringify({ title: notice.title, body: notice.body }))
-  }
-}
 
 export function apply(ctx, raw, deps = {}) {
   const config = resolveConfig(raw)
@@ -136,60 +93,14 @@ export function apply(ctx, raw, deps = {}) {
   /** Post one body to every configured destination. */
   const announce = (text, what) => { deliverTo(channels, text, what) }
 
-  /**
-   * Name the Session the way the GUI does.
-   *
-   * The title lives in the `title` projection rather than in the log header, so a
-   * notification can say which conversation is asking instead of showing a bare id.
-   *
-   * @param session - the Session awaiting an answer.
-   * @returns a one-line identity: title, project, and a short id when nothing else exists.
-   */
-  const sessionLabel = (session) => {
-    const facts = sessionFacts(session)
-    let projected = ''
-    try {
-      const value = ctx.get?.('sessionProjections')?.stateOf?.(session, 'title')
-      if (typeof value === 'string' && value !== '') projected = value
-    } catch (failure) {
-      ctx.logger.warn(`dsh-notify: could not read the session title: ${String(failure)}`)
-    }
-    const name = projected !== '' ? projected : facts.title
-    if (name === '') return facts.project === '' ? facts.shortId : `${facts.project} · ${facts.shortId}`
-    return facts.project === '' ? name : `${name}（${facts.project}）`
-  }
+  const named = createLabels(ctx)
+  const { sessionLabel } = named
 
   /**
-   * The Session name alone.
+   * Hand one composed notice to the browser, which asks the route for it.
    *
-   * The turn notice heading already names the Workspace, so repeating the directory there
-   * would say the same thing twice; approvals keep the suffixed label, where it is the only
-   * hint of which checkout is asking.
-   *
-   * @param session - the Session whose turn ended.
-   * @returns the projected title, or the directory and short id when it has none yet.
-   */
-  const sessionName = (session) => {
-    const facts = sessionFacts(session)
-    let projected = ''
-    try {
-      const value = ctx.get?.('sessionProjections')?.stateOf?.(session, 'title')
-      if (typeof value === 'string') projected = value
-    } catch (failure) {
-      ctx.logger.warn(`dsh-notify: could not read the session title: ${String(failure)}`)
-    }
-    const name = projected !== '' ? projected : facts.title
-    if (name === '') return facts.project === '' ? facts.shortId : `${facts.project} · ${facts.shortId}`
-    return name
-  }
-
-  /**
-   * Hand one composed notice to the browser through the Session log.
-   *
-   * The browser half owns only the decision to show, so the text travels as a log-only
-   * plugin record: invisible to the model, carried by fork and resume, and delivered to
-   * every client that holds a binding for this Session. A host without a real Session
-   * (tests, headless replays) simply skips it.
+   * The newest notice per Session is all the browser needs: an older one has already been
+   * superseded on screen, and the route serves exactly this map.
    *
    * @param session - the Session whose turn ended.
    * @param notice - the two lines the Discord message already carries.
@@ -197,32 +108,7 @@ export function apply(ctx, raw, deps = {}) {
   const publishNotice = (session, notice) => {
     const id = String(session?.id ?? '')
     if (id === '') return
-    // The browser asks for this the moment it sees the turn finish; it holds only the
-    // newest notice, because an older one has already been superseded on screen.
     notices.set(id, { title: notice.title, body: notice.body, at: Date.now() })
-  }
-
-  /**
-   * The Workspace that owns a Session, or the ungrouped label.
-   *
-   * Workspaces are a Host-side registry; a Session's membership lives in the owner's
-   * `sessionIds`, so the label costs one scan. A host without the registry (headless
-   * profiles, tests) reads as ungrouped rather than failing the notice.
-   *
-   * @param session - the Session whose turn ended.
-   * @returns the Workspace title, or the ungrouped label.
-   */
-  const workspaceLabel = (session) => {
-    try {
-      const rows = ctx.get?.('workspaceRegistry')?.list?.() ?? []
-      const id = String(session?.id ?? '')
-      const owner = rows.find((row) => (row?.sessionIds ?? []).some((entry) => String(entry) === id))
-      const title = typeof owner?.title === 'string' ? owner.title : ''
-      return title === '' ? UNGROUPED : title
-    } catch (failure) {
-      ctx.logger.warn(`dsh-notify: could not read the workspace: ${String(failure)}`)
-      return UNGROUPED
-    }
   }
 
   /** Whether clickable controls can carry an answer right now. */
@@ -562,54 +448,10 @@ export function apply(ctx, raw, deps = {}) {
   })
 
   // A finished turn is the other thing worth interrupting a person for: the browser
-  // half shows a desktop notification, and this one says the same thing in the channel
-  // that already carries approvals.
+  // half shows a desktop notification and the channel carries the same two lines.
+  // `turns.js` owns which turns speak and what they say.
   if (config.turnNotify) {
-    /** Last observed request and reply per Session, for the next completion notice. */
-    const asked = new Map()
-    const answered = new Map()
-    /**
-     * Whether the turn running in a Session was started by a goal continuation.
-     *
-     * The round driver admits its own prompt, marked `<goal_round>…</goal_round>`
-     * (`packages/goal/goal-round-driver/src/prompt.ts`), and those rounds can run one
-     * after another unattended. Announcing each one would bury the notices that matter,
-     * so they stay silent; a turn the person actually started still speaks.
-     */
-    const selfDriven = new Map()
-    ctx.on('session/event', (session, event) => {
-      const id = session?.id
-      if (typeof id !== 'string') return
-      if (event?.type === 'user/message') {
-        const text = oneLine(messageText(event.data), TURN_REQUEST_LIMIT)
-        if (text !== '') asked.set(id, text)
-        selfDriven.set(id, isGoalRound(text))
-        return
-      }
-      if (event?.type === 'assistant/message') {
-        const text = oneLine(messageText(event.data), TURN_REPLY_LIMIT)
-        if (text !== '') answered.set(id, text)
-        return
-      }
-      if (event?.type !== 'turn/end') return
-      if (selfDriven.get(id) === true) return
-      try {
-        const notice = formatTurnNotice({
-          session,
-          reason: event.data?.reason,
-          sessionLabel: sessionName(session),
-          workspaceLabel: workspaceLabel(session),
-          asked: asked.get(id) ?? '',
-          answered: answered.get(id) ?? '',
-        })
-        deliverTo(turnChannels, `${notice.title}\n${notice.body}`, 'the turn result')
-        // The browser half shows the same two lines; it must not compose them itself,
-        // because only the Host knows the Workspace, the status and the reply.
-        publishNotice(session, notice)
-      } catch (failure) {
-        ctx.logger.warn(`dsh-notify: turn notification failed: ${String(failure)}`)
-      }
-    })
+    watchTurns({ ctx, turnChannels, deliverTo, labels: named, publishNotice })
   }
 
   // The browser half shows the notice the Host composed; it asks for it when it sees the
