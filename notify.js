@@ -43,6 +43,15 @@ export function condense(value) {
  * @param session - an Agent's Session, as the request events carry it.
  * @returns the short id, project name, and title to show.
  */
+/** Status marks a notice carries, so the line stays one short glyph plus the reply. */
+export const TURN_STATUS_EMOJI = {
+  completed: '✅',
+  blocked: '⏸️',
+  aborted: '⚠️',
+  error: '❌',
+  other: 'ℹ️',
+}
+
 /** Shown when a Session belongs to no Workspace. */
 export const UNGROUPED = '未分组'
 
@@ -145,19 +154,18 @@ export function oneLine(value, limit) {
  * @param facts.answered - the opening of the reply, when it was observed.
  * @returns the message body.
  */
-export function formatTurnEnd({ session, reason, label = 'DSH', sessionLabel, workspaceLabel = '', asked = '', answered = '' }) {
+export function formatTurnNotice({ session, reason, sessionLabel, workspaceLabel = '', asked = '', answered = '' }) {
   const { shortId, project, title } = sessionFacts(session)
-  const status = TURN_STATUS[reason?.kind] ?? '已结束'
+  const heading = [
+    workspaceLabel === '' ? UNGROUPED : workspaceLabel,
+    sessionLabel ?? fallbackLabel(title, project, shortId),
+    oneLine(asked, TURN_REQUEST_LIMIT),
+  ].filter(part => part !== '').join(' - ')
+  const emoji = TURN_STATUS_EMOJI[reason?.kind] ?? TURN_STATUS_EMOJI.other
   const detail = reason?.kind === 'error' ? condense(String(reason.error?.message ?? '')) : ''
-  const task = oneLine(asked, TURN_REQUEST_LIMIT)
+  const status = detail === '' ? emoji : `${emoji} ${detail}`
   const reply = oneLine(answered, TURN_REPLY_LIMIT)
-  return [
-    task === '' ? `【${label}】一轮回答结束` : `【${label}】${task}`,
-    `状态：${detail === '' ? status : `${status}：${detail}`}`,
-    `会话：${sessionLabel ?? fallbackLabel(title, project, shortId)}`,
-    `工作区：${workspaceLabel === '' ? UNGROUPED : workspaceLabel}`,
-    ...reply === '' ? [] : [`回答：${reply}`],
-  ].join('\n')
+  return { title: heading, body: reply === '' ? status : `${status} ${reply}` }
 }
 
 /**

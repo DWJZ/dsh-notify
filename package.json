@@ -1,7 +1,7 @@
 {
   "name": "dsh-notify",
   "version": "0.1.0",
-  "description": "DeepSeek Harness 的 Discord 通知与应答插件：把审批与提问推到 Discord，用按钮、下拉菜单和输入框直接作答。 / DSH notifications and answering over Discord: approvals and questions arrive with buttons, selects, and modals.",
+  "description": "DeepSeek Harness \u7684 Discord \u901a\u77e5\u4e0e\u5e94\u7b54\u63d2\u4ef6\uff1a\u628a\u5ba1\u6279\u4e0e\u63d0\u95ee\u63a8\u5230 Discord\uff0c\u7528\u6309\u94ae\u3001\u4e0b\u62c9\u83dc\u5355\u548c\u8f93\u5165\u6846\u76f4\u63a5\u4f5c\u7b54\u3002 / DSH notifications and answering over Discord: approvals and questions arrive with buttons, selects, and modals.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -25,7 +25,10 @@
     "cordis.patch.yml",
     "README.md",
     "README.zh.md",
-    "LICENSE"
+    "LICENSE",
+    "config.js",
+    "web.js",
+    "discord-rest.js"
   ],
   "engines": {
     "node": "^22.19 || >=24"
@@ -47,5 +50,7 @@
   "scripts": {
     "test": "node test/format.spec.mjs && node test/turn-notify.spec.mjs && node test/wiring.spec.mjs && node test/discord.spec.mjs && node test/gateway.spec.mjs && node test/components.spec.mjs && node test/twoway.spec.mjs && node test/annotate.spec.mjs && node test/client.spec.mjs",
     "send:test": "node test/send-once.mjs"
-  }
+  },
+  "peerDependencies": {},
+  "devDependencies": {}
 }

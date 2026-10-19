@@ -63,13 +63,6 @@ window.__ModuleLoader__.load({
 			test: "发一条测试通知",
 			testBody: "测试：这条是 dsh-notify 发的",
 			unsupported: "这个浏览器没有 Notification 接口，本机通知不可用。",
-			ungrouped: "未分组",
-			body: "状态：{status} · {session} · 工作区：{workspace}",
-			statusCompleted: "完成",
-			statusBlocked: "等待你处理",
-			statusAborted: "被中断",
-			statusError: "出错",
-			statusOther: "已结束",
 		};
 		/** @type {Record<string, string>} */
 		const en = {
@@ -87,7 +80,6 @@ window.__ModuleLoader__.load({
 			testBody: "Test: this one came from dsh-notify",
 			unsupported: "This browser has no Notification interface, so local notices are unavailable.",
 			ungrouped: "Ungrouped",
-			body: "Status: {status} · {session} · Workspace: {workspace}",
 			statusCompleted: "completed",
 			statusBlocked: "waiting for you",
 			statusAborted: "interrupted",
@@ -97,41 +89,8 @@ window.__ModuleLoader__.load({
 		//#endregion
 
 		//#region notifications
-		/** `turn/end` reason kinds to dictionary keys. */
-		const STATUS_KEYS = {
-			completed: "statusCompleted",
-			blocked: "statusBlocked",
-			aborted: "statusAborted",
-			error: "statusError",
-		};
-
-		/**
-		 * Read the plain text one message event carries.
-		 * @param data - the event payload, or a nested `message` carrying the blocks.
-		 * @returns the joined text blocks, or the empty string.
-		 */
-		function textOf(data) {
-			const blocks = Array.isArray(data?.content) ? data.content
-				: Array.isArray(data?.message?.content) ? data.message.content : null;
-			if (blocks === null) return typeof data?.text === "string" ? data.text : "";
-			return blocks
-				.filter(block => block?.type === "text" && typeof block.text === "string")
-				.map(block => block.text)
-				.join("\n");
-		}
-
-		/**
-		 * Flatten one message into a single line and remember it, when it says anything.
-		 * @param store - the per-session map to update.
-		 * @param id - the session the message belongs to.
-		 * @param value - the raw message text.
-		 * @param limit - the longest line the notification can show.
-		 */
-		function remember(store, id, value, limit) {
-			const flat = String(value ?? "").replace(/\s+/gu, " ").trim();
-			if (flat === "") return;
-			store.set(id, flat.length <= limit ? flat : `${flat.slice(0, limit - 1)}…`);
-		}
+		/** Notifications that are still on screen, keyed by the Session they describe. */
+		const live = new Map();
 
 		/** Whether this browser can show a notification at all. */
 		const supported = () => typeof Notification !== "undefined";
@@ -173,7 +132,23 @@ window.__ModuleLoader__.load({
 				open();
 				notice.close();
 			};
+			// A notice outlives the reason to read it once its Session is back in front:
+			// the person is looking at the turn, so the popup has nothing left to say.
+			live.set(String(tag), notice);
+			notice.onclose = () => { if (live.get(String(tag)) === notice) live.delete(String(tag)) };
 			return true;
+		}
+
+		/**
+		 * Withdraw the notice for a Session the person can now see.
+		 *
+		 * @param id - the Session that came back in front.
+		 */
+		function dismiss(id) {
+			const notice = live.get(String(id));
+			if (notice === undefined) return;
+			live.delete(String(id));
+			try { notice.close() } catch { /* already gone */ }
 		}
 		//#endregion
 
@@ -237,86 +212,72 @@ window.__ModuleLoader__.load({
 			ctx.effect(() => {
 				/** Last observed running flag per session. */
 				const running = new Map();
-				/** Last `turn/end` reason per session, when a binding was available. */
-				const reasons = new Map();
-				/** Last thing the person asked in this session, and the last thing said back. */
-				const asked = new Map();
-				const answered = new Map();
-				/** Whether the current turn was admitted by a goal continuation, not by a person. */
-				const selfDriven = new Map();
-				/** Live binding subscriptions, keyed by session. */
-				const stops = new Map();
 
-				const bind = (id) => {
-					if (stops.has(id)) return;
-					const binding = ctx.sessions.binding(id);
-					if (binding === undefined) return;
-					stops.set(id, binding.eventSource.subscribe(() => {
-						const { change } = binding.eventSource.getSnapshot();
-						if (change.kind !== "append") return;
-						for (const { event } of change.entries) {
-							if (event.type === "turn/end") reasons.set(id, event.data?.reason);
-							else if (event.type === "user/message") {
-								remember(asked, id, textOf(event.data), 70);
-								// The goal round driver admits its own prompt, marked
-								// `<goal_round>…</goal_round>`; those rounds chain on their own, so
-								// announcing each would bury the notices that matter.
-								selfDriven.set(id, String(textOf(event.data)).trim().startsWith("<goal_round>"));
-							}
-							else if (event.type === "assistant/message") remember(answered, id, textOf(event.data), 140);
-						}
-					}));
+				/** Whether the person can already see this Session finish. */
+				const redundant = (id) => {
+					if (inFront() !== true) return false;
+					const { byId } = ctx.sessions.list.getSnapshot();
+					const shown = Object.values(byId).find(row => (row.retainedBy?.mainView ?? 0) > 0)?.id;
+					return shown === id;
 				};
 
 				/**
-				 * The Workspace that owns a Session, read from the same registry the sidebar uses.
-				 * @param id - the Session id.
-				 * @returns its Workspace title, or the ungrouped label.
+				 * Ask the Host for the notice it composed for this turn.
+				 *
+				 * Nothing is composed here: the Host owns the Workspace, the status and the reply,
+				 * and already sent the same two lines to Discord. This half only decides whether
+				 * to show them.
+				 * @param id - the Session whose turn just ended.
 				 */
-				const workspaceOf = (id) => {
-					try {
-						const snapshot = ctx.get?.("workspaces")?.list?.getSnapshot?.();
-						const owner = (snapshot?.items ?? []).find(row => (row.sessionIds ?? []).some(entry => String(entry) === String(id)));
-						const title = typeof owner?.title === "string" ? owner.title : "";
-						return title === "" ? t("ungrouped") : title;
-					} catch {
-						return t("ungrouped");
-					}
+				const announce = (id) => {
+					if (redundant(id) === true) return;
+					void fetch(`/dsh-notify/notice?session=${encodeURIComponent(id)}`, { headers: { accept: "application/json" } })
+						.then((response) => (response.ok ? response.json() : undefined))
+						.then((notice) => {
+							if (notice === undefined) return;
+							const title = String(notice.title ?? "");
+							const body = String(notice.body ?? "");
+							if (title === "" && body === "") return;
+							show(t, title, body, id, () => ctx.uiWorkspace.openSession(id));
+						})
+						.catch(() => {});
+				};
+
+				/** The Session the main view is showing, if any. */
+				const shownSession = () => {
+					const { byId } = ctx.sessions.list.getSnapshot();
+					return Object.values(byId).find(row => (row.retainedBy?.mainView ?? 0) > 0)?.id;
 				};
 
 				const observe = () => {
 					const { ids, byId } = ctx.sessions.list.getSnapshot();
-					// The Session on screen is the one the main view retains, the same row the
-					// browser title reads. Only that one finishing under your eyes is redundant:
-					// a focused window still hears about every other Session, which is the whole
-					// point of running several.
-					const shown = Object.values(byId).find(row => (row.retainedBy?.mainView ?? 0) > 0)?.id;
-					const inFrontNow = inFront();
+					// Switching to the Session a notice is about is the same as coming back to it.
+					const shown = shownSession();
+					if (inFront() === true && shown !== undefined) dismiss(shown);
 					for (const id of ids) {
-						bind(id);
 						const isRunning = byId[id]?.running === true;
 						const was = running.get(id);
 						running.set(id, isRunning);
 						if (was !== true || isRunning) continue;
-						if (inFrontNow && id === shown) continue;
-						if (selfDriven.get(id) === true) continue;
-						const key = STATUS_KEYS[reasons.get(id)?.kind] ?? "statusOther";
-						// The Session title names the conversation from its first message, which is
-						// not what just finished. The turn itself is: the request heads the notice,
-						// and the reply's opening line follows the status.
-						const label = byId[id]?.displayTitle ?? id;
-						const heading = asked.get(id) ?? label;
-						const body = t("body", { status: t(key), session: label, workspace: workspaceOf(id) });
-						const summary = answered.get(id);
-						show(t, heading, summary === undefined ? body : `${body}\n${summary}`, id, () => ctx.uiWorkspace.openSession(id));
+						announce(id);
 					}
 				};
+
+				// Coming back to the window withdraws the notice for the Session on screen.
+				const onFocus = () => {
+					if (inFront() !== true) return;
+					const shown = shownSession();
+					if (shown !== undefined) dismiss(shown);
+				};
+				window.addEventListener("focus", onFocus);
+				document.addEventListener("visibilitychange", onFocus);
 
 				const stopList = ctx.sessions.list.subscribe(observe);
 				observe();
 				return () => {
+					window.removeEventListener("focus", onFocus);
+					document.removeEventListener("visibilitychange", onFocus);
 					stopList();
-					for (const stop of stops.values()) stop();
 				};
 			}, "dsh-notify: completion notices");
 

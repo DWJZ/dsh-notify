@@ -21,135 +21,14 @@ import {
   questionRows,
 } from './components.js'
 import { approvalFromReply, answerFromReply, createReplyPoller, makeCode, parseReply } from './discord.js'
+import { answerInteraction, editAsBot, postAsBot } from './discord-rest.js'
 import { createGateway } from './gateway.js'
-import { createAnnouncer, createChannels, formatApproval, formatQuestions, formatTurnEnd, isGoalRound, messageText, oneLine, sessionFacts, TURN_REPLY_LIMIT, TURN_REQUEST_LIMIT, UNGROUPED } from './notify.js'
-
-const API = 'https://discord.com/api/v10'
+import { resolveConfig } from './config.js'
+import { mountNoticeRoute } from './web.js'
+import { createAnnouncer, createChannels, formatApproval, formatQuestions, formatTurnNotice, isGoalRound, messageText, oneLine, sessionFacts, TURN_REPLY_LIMIT, TURN_REQUEST_LIMIT, UNGROUPED } from './notify.js'
 
 /** Plugin name, as the Loader reports it. */
 export const name = 'dsh-notify'
-
-/** Discord message flag that keeps a message quiet: delivered, unread, no notification. */
-const SILENT_FLAG = 1 << 12
-
-/** Post one message as the bot, so it can carry components and be edited later. */
-/**
- * Post one message as the bot.
- *
- * `silent` sets Discord's `SUPPRESS_NOTIFICATIONS` flag: the message still lands in
- * the channel and still marks it unread, but it does not raise a push or desktop
- * notification. Completion notices use it — one per turn is a running commentary,
- * not something to interrupt a person for — while approvals and questions keep
- * notifying, because those are the ones waiting on an answer.
- * @param options - bot token, channel, text, optional controls, and the silent flag.
- * @returns the created message id, or the failure.
- */
-export async function postAsBot({ token, channelId, text, components, silent = false, fetchImpl = fetch }) {
-  try {
-    const payload = components === undefined ? { content: text } : { content: text, components }
-    if (silent) payload.flags = SILENT_FLAG
-    const response = await fetchImpl(`${API}/channels/${channelId}/messages`, {
-      method: 'POST',
-      headers: { authorization: `Bot ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(10_000),
-    })
-    if (!response.ok) {
-      return { ok: false, error: `HTTP ${String(response.status)} ${(await response.text()).slice(0, 200)}` }
-    }
-    const body = await response.json()
-    return { ok: true, id: typeof body?.id === 'string' ? body.id : undefined }
-  } catch (error) {
-    return { ok: false, error: String(error) }
-  }
-}
-
-/** Replace the text and controls of a message the bot posted. */
-export async function editAsBot({ token, channelId, messageId, text, components, fetchImpl = fetch }) {
-  try {
-    const body = components === undefined ? { content: text } : { content: text, components }
-    const response = await fetchImpl(`${API}/channels/${channelId}/messages/${messageId}`, {
-      method: 'PATCH',
-      headers: { authorization: `Bot ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(10_000),
-    })
-    return response.ok ? { ok: true } : { ok: false, error: `HTTP ${String(response.status)}` }
-  } catch (error) {
-    return { ok: false, error: String(error) }
-  }
-}
-
-/**
- * Answer one interaction, replacing the message it came from.
- * Discord shows a failure to the human when a callback does not arrive quickly, so the
- * caller must send this before doing anything slow.
- *
- * @param options - the callback.
- * @param options.interaction - the interaction being answered.
- * @param options.body - the callback payload.
- * @returns the outcome, never a rejection.
- */
-export async function answerInteraction({ interaction, body, fetchImpl = fetch }) {
-  try {
-    const response = await fetchImpl(
-      `${API}/interactions/${String(interaction.id)}/${String(interaction.token)}/callback`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(10_000),
-      },
-    )
-    return response.ok ? { ok: true } : { ok: false, error: `HTTP ${String(response.status)}` }
-  } catch (error) {
-    return { ok: false, error: String(error) }
-  }
-}
-
-/**
- * Read the plugin configuration.
- *
- * Deployment-varying values live here rather than in code. A configuration with no
- * destination at all is a load-time failure: a notification plugin that cannot
- * address anyone is a misconfiguration, not a disabled feature.
- *
- * @param raw - the config object the Loader passed.
- * @returns the resolved settings.
- */
-export function resolveConfig(raw) {
-  const source = raw ?? {}
-  const text = (value) => (typeof value === 'string' ? value.trim() : '')
-  const settings = {
-    discordWebhookUrl: text(source.discordWebhookUrl),
-    imessageRecipient: text(source.imessageRecipient),
-    discordBotToken: text(source.discordBotToken),
-    discordChannelId: text(source.discordChannelId),
-    discordAllowedUserId: text(source.discordAllowedUserId),
-    label: text(source.label) === '' ? 'DSH' : text(source.label),
-    components: source.components !== false,
-    turnNotify: source.turnNotify !== false,
-    ttlMs: Number.isInteger(source.ttlMs) && source.ttlMs >= 0 ? source.ttlMs : 300_000,
-    minGapMs: Number.isInteger(source.minGapMs) && source.minGapMs >= 0 ? source.minGapMs : 2_000,
-    replyWindowMs: Number.isInteger(source.replyWindowMs) && source.replyWindowMs >= 0
-      ? source.replyWindowMs
-      : 0,
-    pollIntervalMs: Number.isInteger(source.pollIntervalMs) && source.pollIntervalMs >= 1_000
-      ? source.pollIntervalMs
-      : 3_000,
-  }
-  if (source.enabled === false) return { ...settings, enabled: false, answering: false }
-  if (settings.discordWebhookUrl === '' && settings.imessageRecipient === '') {
-    throw new Error('dsh-notify: configure `discordWebhookUrl` or `imessageRecipient`')
-  }
-  const replyParts = [settings.discordBotToken, settings.discordChannelId, settings.discordAllowedUserId]
-  const configured = replyParts.filter(part => part !== '').length
-  if (configured !== 0 && configured !== replyParts.length) {
-    throw new Error('dsh-notify: answering from Discord needs all three of '
-      + '`discordBotToken`, `discordChannelId`, `discordAllowedUserId`')
-  }
-  return { ...settings, enabled: true, answering: configured === replyParts.length }
-}
 
 /**
  * Mount the plugin.
@@ -157,6 +36,52 @@ export function resolveConfig(raw) {
  * @param raw - the Loader-supplied configuration.
  * @param deps - injectable collaborators for tests: `channels`, `startPoller`, `startGateway`.
  */
+
+/** Whether a request came from this machine, same origin, with no proxy in front. */
+function sameOriginLoopback(req) {
+  const address = req.socket?.remoteAddress
+  if (address !== '127.0.0.1' && address !== '::1' && address !== '::ffff:127.0.0.1') return false
+  if (req.headers.forwarded !== undefined
+    || req.headers['x-forwarded-for'] !== undefined
+    || req.headers['x-real-ip'] !== undefined) return false
+  const host = req.headers.host ?? ''
+  const origin = req.headers.origin
+  if (typeof origin !== 'string' || origin === '') return host !== ''
+  try { return new URL(origin).host === host } catch { return false }
+}
+
+/**
+ * Answer `/dsh-notify/notice?session=<id>` with the newest composed notice.
+ *
+ * The browser composes nothing: it asks for the text the Host already sent to Discord, so
+ * both surfaces always show the same sentence.
+ * @param notices - the per-Session notice store.
+ * @returns a request handler that owns its response.
+ */
+function noticeHandler(notices) {
+  return (req, res) => {
+    if (req.method !== 'GET') {
+      res.writeHead(405, { allow: 'GET' })
+      res.end()
+      return
+    }
+    if (!sameOriginLoopback(req)) {
+      res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' })
+      res.end('notices are limited to same-origin loopback requests')
+      return
+    }
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+    const notice = notices.get(url.searchParams.get('session') ?? '')
+    if (notice === undefined) {
+      res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+      res.end('no notice for that session')
+      return
+    }
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+    res.end(JSON.stringify({ title: notice.title, body: notice.body }))
+  }
+}
+
 export function apply(ctx, raw, deps = {}) {
   const config = resolveConfig(raw)
   if (!config.enabled) {
@@ -185,6 +110,8 @@ export function apply(ctx, raw, deps = {}) {
   const shouldAnnounce = createAnnouncer({ ttlMs: config.ttlMs, minGapMs: config.minGapMs })
   /** Pending decisions by correlation code; a question entry owns its own progress. */
   const pending = new Map()
+  /** Newest composed notice per Session, read by the browser half. */
+  const notices = new Map()
   let gatewayReady = false
 
   /** Post one body to every channel, reporting outcomes without failing the caller. */
@@ -230,6 +157,49 @@ export function apply(ctx, raw, deps = {}) {
     const name = projected !== '' ? projected : facts.title
     if (name === '') return facts.project === '' ? facts.shortId : `${facts.project} · ${facts.shortId}`
     return facts.project === '' ? name : `${name}（${facts.project}）`
+  }
+
+  /**
+   * The Session name alone.
+   *
+   * The turn notice heading already names the Workspace, so repeating the directory there
+   * would say the same thing twice; approvals keep the suffixed label, where it is the only
+   * hint of which checkout is asking.
+   *
+   * @param session - the Session whose turn ended.
+   * @returns the projected title, or the directory and short id when it has none yet.
+   */
+  const sessionName = (session) => {
+    const facts = sessionFacts(session)
+    let projected = ''
+    try {
+      const value = ctx.get?.('sessionProjections')?.stateOf?.(session, 'title')
+      if (typeof value === 'string') projected = value
+    } catch (failure) {
+      ctx.logger.warn(`dsh-notify: could not read the session title: ${String(failure)}`)
+    }
+    const name = projected !== '' ? projected : facts.title
+    if (name === '') return facts.project === '' ? facts.shortId : `${facts.project} · ${facts.shortId}`
+    return name
+  }
+
+  /**
+   * Hand one composed notice to the browser through the Session log.
+   *
+   * The browser half owns only the decision to show, so the text travels as a log-only
+   * plugin record: invisible to the model, carried by fork and resume, and delivered to
+   * every client that holds a binding for this Session. A host without a real Session
+   * (tests, headless replays) simply skips it.
+   *
+   * @param session - the Session whose turn ended.
+   * @param notice - the two lines the Discord message already carries.
+   */
+  const publishNotice = (session, notice) => {
+    const id = String(session?.id ?? '')
+    if (id === '') return
+    // The browser asks for this the moment it sees the turn finish; it holds only the
+    // newest notice, because an older one has already been superseded on screen.
+    notices.set(id, { title: notice.title, body: notice.body, at: Date.now() })
   }
 
   /**
@@ -624,20 +594,27 @@ export function apply(ctx, raw, deps = {}) {
       if (event?.type !== 'turn/end') return
       if (selfDriven.get(id) === true) return
       try {
-        deliverTo(turnChannels, formatTurnEnd({
+        const notice = formatTurnNotice({
           session,
           reason: event.data?.reason,
-          label: config.label,
-          sessionLabel: sessionLabel(session),
+          sessionLabel: sessionName(session),
           workspaceLabel: workspaceLabel(session),
           asked: asked.get(id) ?? '',
           answered: answered.get(id) ?? '',
-        }), 'the turn result')
+        })
+        deliverTo(turnChannels, `${notice.title}\n${notice.body}`, 'the turn result')
+        // The browser half shows the same two lines; it must not compose them itself,
+        // because only the Host knows the Workspace, the status and the reply.
+        publishNotice(session, notice)
       } catch (failure) {
         ctx.logger.warn(`dsh-notify: turn notification failed: ${String(failure)}`)
       }
     })
   }
+
+  // The browser half shows the notice the Host composed; it asks for it when it sees the
+  // turn finish, so the two never disagree about the text. Same-origin loopback only.
+  mountNoticeRoute(ctx, () => notices)
 
   ctx.on('user-questions/request', (request, next) => {
     const delegated = next()

@@ -5,7 +5,8 @@
  *
  * Usage: `node test/twoway.spec.mjs`.
  */
-import { apply, resolveConfig } from '../index.js'
+import { resolveConfig } from '../config.js'
+import { apply } from '../index.js'
 import { createChannels, sendDiscord, sessionFacts } from '../notify.js'
 import { parseCustomId } from '../components.js'
 
@@ -31,6 +32,8 @@ function stubContext() {
         info: (line) => { logs.info.push(line) },
         warn: (line) => { logs.warn.push(line) },
       },
+      inject: (_names, factory) => factory({ effect: (create) => create(), webServer: { register: () => () => {} } }),
+      get: () => undefined,
     },
   }
 }

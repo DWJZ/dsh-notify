@@ -43,6 +43,8 @@ function stubContext() {
     ctx: {
       on: (type, handler) => { listeners.set(type, handler) },
       logger: { info: () => {}, warn: () => {} },
+      inject: (_names, factory) => factory({ effect: (create) => create(), webServer: { register: () => () => {} } }),
+      get: () => undefined,
     },
   }
 }

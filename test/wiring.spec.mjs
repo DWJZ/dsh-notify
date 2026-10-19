@@ -4,7 +4,8 @@
  *
  * Usage: `node test/wiring.spec.mjs`.
  */
-import { apply, resolveConfig } from '../index.js'
+import { resolveConfig } from '../config.js'
+import { apply } from '../index.js'
 import { createChannels, sendDiscord } from '../notify.js'
 
 let failures = 0
@@ -29,6 +30,8 @@ function stubContext() {
         info: (line) => { logs.info.push(line) },
         warn: (line) => { logs.warn.push(line) },
       },
+      inject: (_names, factory) => factory({ effect: (create) => create(), webServer: { register: () => () => {} } }),
+      get: () => undefined,
     },
   }
 }
