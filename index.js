@@ -157,6 +157,56 @@ export function resolveConfig(raw) {
  * @param raw - the Loader-supplied configuration.
  * @param deps - injectable collaborators for tests: `channels`, `startPoller`, `startGateway`.
  */
+/** Whether a request came from this machine, same origin, with no proxy in front. */
+function sameOriginLoopback(req) {
+  const address = req.socket?.remoteAddress
+  if (address !== '127.0.0.1' && address !== '::1' && address !== '::ffff:127.0.0.1') return false
+  if (req.headers.forwarded !== undefined
+    || req.headers['x-forwarded-for'] !== undefined
+    || req.headers['x-real-ip'] !== undefined) return false
+  const host = req.headers.host ?? ''
+  const origin = req.headers.origin
+  if (typeof origin !== 'string' || origin === '') return host !== ''
+  try { return new URL(origin).host === host } catch { return false }
+}
+
+/**
+ * Answer `/dsh-notify/presence` with the browser's account of what it can see.
+ *
+ * @param presence - the state the turn notice reads; updated in place.
+ * @returns a request handler that owns its response.
+ */
+function presenceHandler(presence) {
+  return (req, res) => {
+    if (req.method !== 'POST') {
+      res.writeHead(405, { allow: 'POST' })
+      res.end()
+      return
+    }
+    if (!sameOriginLoopback(req)) {
+      res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' })
+      res.end('presence is limited to same-origin loopback requests')
+      return
+    }
+    let body = ''
+    req.setEncoding('utf8')
+    req.on('data', (chunk) => { body += chunk })
+    req.on('end', () => {
+      let payload
+      try { payload = JSON.parse(body === '' ? '{}' : body) } catch {
+        res.writeHead(400, { 'content-type': 'text/plain; charset=utf-8' })
+        res.end('invalid json')
+        return
+      }
+      presence.focused = payload?.focused === true
+      presence.shown = typeof payload?.shown === 'string' ? payload.shown : ''
+      presence.reported = true
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+      res.end(JSON.stringify({ ok: true }))
+    })
+  }
+}
+
 export function apply(ctx, raw, deps = {}) {
   const config = resolveConfig(raw)
   if (!config.enabled) {
@@ -643,21 +693,9 @@ export function apply(ctx, raw, deps = {}) {
   // loopback only, like every other local control route.
   ctx.inject(['webServer'], (webCtx) => {
     webCtx.effect(() => webCtx.webServer.register({
-      method: 'POST',
+      kind: 'exact',
       path: '/dsh-notify/presence',
-      handler: (request) => {
-        const host = String(request.headers.host ?? '')
-        const origin = request.headers.origin
-        if (typeof origin === 'string' && origin !== '' && new URL(origin).host !== host) {
-          return { status: 403, body: 'cross-origin' }
-        }
-        let payload
-        try { payload = JSON.parse(request.body ?? '{}') } catch { return { status: 400, body: 'invalid json' } }
-        presence.focused = payload?.focused === true
-        presence.shown = typeof payload?.shown === 'string' ? payload.shown : ''
-        presence.reported = true
-        return { status: 200, body: JSON.stringify({ ok: true }) }
-      },
+      handler: presenceHandler(presence),
     }), 'dsh-notify: browser presence')
   })
 

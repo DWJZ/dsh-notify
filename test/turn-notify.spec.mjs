@@ -123,8 +123,25 @@ console.log('the Discord notice follows the browser')
       turnNotify: true,
     })
     const presence = routes.find(route => route.path === '/dsh-notify/presence')
-    check('the browser has a route to report presence', presence !== undefined, JSON.stringify(routes.map(route => route.path)))
-    const answered = presence.handler({ headers: { host: '127.0.0.1:3080' }, body: JSON.stringify({ focused: true, shown: String(session.id) }) })
+    check('the browser has a route to report presence', presence?.kind === 'exact', JSON.stringify(routes.map(route => route.path)))
+    /** Drive the handler the way the web server does: a request stream and a response to own. */
+    const report = (payload, headers = {}) => {
+      const answer = { status: 0, body: '' }
+      const req = {
+        method: 'POST',
+        headers: { host: '127.0.0.1:3080', ...headers },
+        socket: { remoteAddress: '127.0.0.1' },
+        setEncoding: () => {},
+        on: (event, handler) => { if (event === 'data') handler(JSON.stringify(payload)); if (event === 'end') handler() },
+      }
+      const res = {
+        writeHead: (status) => { answer.status = status; return res },
+        end: (body) => { answer.body = String(body ?? '') },
+      }
+      presence.handler(req, res)
+      return answer
+    }
+    const answered = report({ focused: true, shown: String(session.id) })
     check('a same-origin report is accepted', answered.status === 200, JSON.stringify(answered))
 
     const turn = async () => {
@@ -138,11 +155,11 @@ console.log('the Discord notice follows the browser')
     check('a turn the person is watching is delivered without a Discord popup',
       inFront.includes(`"flags":${String(1 << 12)}`), inFront.slice(-80))
 
-    presence.handler({ headers: { host: '127.0.0.1:3080' }, body: JSON.stringify({ focused: true, shown: 'another-session' }) })
+    report({ focused: true, shown: 'another-session' })
     const elsewhere = await turn()
     check('and another Session still speaks', !elsewhere.includes(`"flags":${String(1 << 12)}`), elsewhere.slice(-80))
 
-    const crossed = presence.handler({ headers: { host: '127.0.0.1:3080', origin: 'https://evil.example' }, body: '{}' })
+    const crossed = report({}, { origin: 'https://evil.example' })
     check('a cross-origin report is refused', crossed.status === 403, JSON.stringify(crossed))
   } finally {
     globalThis.fetch = realFetch
