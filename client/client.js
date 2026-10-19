@@ -63,7 +63,8 @@ window.__ModuleLoader__.load({
 			test: "发一条测试通知",
 			testBody: "测试：这条是 dsh-notify 发的",
 			unsupported: "这个浏览器没有 Notification 接口，本机通知不可用。",
-			body: "状态：{status} · {session}",
+			ungrouped: "未分组",
+			body: "状态：{status} · {session} · 工作区：{workspace}",
 			statusCompleted: "完成",
 			statusBlocked: "等待你处理",
 			statusAborted: "被中断",
@@ -85,7 +86,8 @@ window.__ModuleLoader__.load({
 			test: "Send a test notification",
 			testBody: "Test: this one came from dsh-notify",
 			unsupported: "This browser has no Notification interface, so local notices are unavailable.",
-			body: "Status: {status} · {session}",
+			ungrouped: "Ungrouped",
+			body: "Status: {status} · {session} · Workspace: {workspace}",
 			statusCompleted: "completed",
 			statusBlocked: "waiting for you",
 			statusAborted: "interrupted",
@@ -266,6 +268,22 @@ window.__ModuleLoader__.load({
 					}));
 				};
 
+				/**
+				 * The Workspace that owns a Session, read from the same registry the sidebar uses.
+				 * @param id - the Session id.
+				 * @returns its Workspace title, or the ungrouped label.
+				 */
+				const workspaceOf = (id) => {
+					try {
+						const snapshot = ctx.get?.("workspaces")?.list?.getSnapshot?.();
+						const owner = (snapshot?.items ?? []).find(row => (row.sessionIds ?? []).some(entry => String(entry) === String(id)));
+						const title = typeof owner?.title === "string" ? owner.title : "";
+						return title === "" ? t("ungrouped") : title;
+					} catch {
+						return t("ungrouped");
+					}
+				};
+
 				const observe = () => {
 					const { ids, byId } = ctx.sessions.list.getSnapshot();
 					// The Session on screen is the one the main view retains, the same row the
@@ -288,7 +306,7 @@ window.__ModuleLoader__.load({
 						// and the reply's opening line follows the status.
 						const label = byId[id]?.displayTitle ?? id;
 						const heading = asked.get(id) ?? label;
-						const body = t("body", { status: t(key), session: label });
+						const body = t("body", { status: t(key), session: label, workspace: workspaceOf(id) });
 						const summary = answered.get(id);
 						show(t, heading, summary === undefined ? body : `${body}\n${summary}`, id, () => ctx.uiWorkspace.openSession(id));
 					}

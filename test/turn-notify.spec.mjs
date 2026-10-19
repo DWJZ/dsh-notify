@@ -20,7 +20,10 @@ const session = { id: 'session-0d7283cf-5423-4d06-877d-e29083ea730d', header: { 
 
 console.log('the text names the task and how it ended')
 check('a completed turn', formatTurnEnd({ session, reason: { kind: 'completed' }, sessionLabel: '修 CI' })
-  === '【DSH】一轮回答结束\n状态：完成\n会话：修 CI')
+  === '【DSH】一轮回答结束\n状态：完成\n会话：修 CI\n工作区：未分组')
+check('a Workspace names itself when the Session belongs to one',
+  formatTurnEnd({ session, reason: { kind: 'completed' }, sessionLabel: '修 CI', workspaceLabel: 'dsh-plugins' })
+    .includes('工作区：dsh-plugins'))
 check('an interrupted turn', formatTurnEnd({ session, reason: { kind: 'aborted' }, sessionLabel: '修 CI' }).includes('状态：被中断'))
 check('a blocked turn waits for the person', formatTurnEnd({ session, reason: { kind: 'blocked' }, sessionLabel: '修 CI' }).includes('状态：等待你处理'))
 check('an error carries its message', formatTurnEnd({
@@ -52,8 +55,26 @@ const cut = formatTurnEnd({
   answered: 'y'.repeat(400),
 }).split('\n')
 check('long text is cut to the same budgets the browser half uses',
-  cut[0] === `【DSH】${'x'.repeat(69)}…` && cut[3] === `回答：${'y'.repeat(139)}…`,
+  cut[0] === `【DSH】${'x'.repeat(69)}…` && cut[4] === `回答：${'y'.repeat(139)}…`,
   JSON.stringify(cut.map(line => line.length)))
+
+console.log('the notice names the Workspace that owns the Session')
+{
+  const delivered = []
+  const withRegistry = {
+    logger: { info: () => {}, warn: () => {} },
+    on: (name, listener) => { if (name === 'session/event') withRegistry.listeners.push(listener); return () => {} },
+    get: (name) => (name === 'workspaceRegistry'
+      ? { list: () => [{ title: 'dsh-plugins', sessionIds: [String(session.id)] }, { title: 'other', sessionIds: [] }] }
+      : undefined),
+    inject: () => {},
+    listeners: [],
+  }
+  apply(withRegistry, { discordWebhookUrl: 'https://example.test/hook', turnNotify: true }, { channels: [{ name: 'test', deliver: text => { delivered.push(text); return { ok: true } } }] })
+  withRegistry.listeners[0](session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+  check('the owning Workspace title is used', delivered[0]?.includes('工作区：dsh-plugins') === true, JSON.stringify(delivered[0] ?? ''))
+  check('and a Session in no Workspace reads as ungrouped', !delivered[0].includes('工作区：other'))
+}
 
 console.log('the plugin posts one message per finished turn')
 const delivered = []

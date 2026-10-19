@@ -22,7 +22,7 @@ import {
 } from './components.js'
 import { approvalFromReply, answerFromReply, createReplyPoller, makeCode, parseReply } from './discord.js'
 import { createGateway } from './gateway.js'
-import { createAnnouncer, createChannels, formatApproval, formatQuestions, formatTurnEnd, isGoalRound, messageText, oneLine, sessionFacts, TURN_REPLY_LIMIT, TURN_REQUEST_LIMIT } from './notify.js'
+import { createAnnouncer, createChannels, formatApproval, formatQuestions, formatTurnEnd, isGoalRound, messageText, oneLine, sessionFacts, TURN_REPLY_LIMIT, TURN_REQUEST_LIMIT, UNGROUPED } from './notify.js'
 
 const API = 'https://discord.com/api/v10'
 
@@ -230,6 +230,29 @@ export function apply(ctx, raw, deps = {}) {
     const name = projected !== '' ? projected : facts.title
     if (name === '') return facts.project === '' ? facts.shortId : `${facts.project} · ${facts.shortId}`
     return facts.project === '' ? name : `${name}（${facts.project}）`
+  }
+
+  /**
+   * The Workspace that owns a Session, or the ungrouped label.
+   *
+   * Workspaces are a Host-side registry; a Session's membership lives in the owner's
+   * `sessionIds`, so the label costs one scan. A host without the registry (headless
+   * profiles, tests) reads as ungrouped rather than failing the notice.
+   *
+   * @param session - the Session whose turn ended.
+   * @returns the Workspace title, or the ungrouped label.
+   */
+  const workspaceLabel = (session) => {
+    try {
+      const rows = ctx.get?.('workspaceRegistry')?.list?.() ?? []
+      const id = String(session?.id ?? '')
+      const owner = rows.find((row) => (row?.sessionIds ?? []).some((entry) => String(entry) === id))
+      const title = typeof owner?.title === 'string' ? owner.title : ''
+      return title === '' ? UNGROUPED : title
+    } catch (failure) {
+      ctx.logger.warn(`dsh-notify: could not read the workspace: ${String(failure)}`)
+      return UNGROUPED
+    }
   }
 
   /** Whether clickable controls can carry an answer right now. */
@@ -606,6 +629,7 @@ export function apply(ctx, raw, deps = {}) {
           reason: event.data?.reason,
           label: config.label,
           sessionLabel: sessionLabel(session),
+          workspaceLabel: workspaceLabel(session),
           asked: asked.get(id) ?? '',
           answered: answered.get(id) ?? '',
         }), 'the turn result')

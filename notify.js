@@ -43,6 +43,9 @@ export function condense(value) {
  * @param session - an Agent's Session, as the request events carry it.
  * @returns the short id, project name, and title to show.
  */
+/** Shown when a Session belongs to no Workspace. */
+export const UNGROUPED = '未分组'
+
 export function sessionFacts(session) {
   const id = typeof session?.id === 'string' ? session.id : ''
   const header = session?.header ?? {}
@@ -142,7 +145,7 @@ export function oneLine(value, limit) {
  * @param facts.answered - the opening of the reply, when it was observed.
  * @returns the message body.
  */
-export function formatTurnEnd({ session, reason, label = 'DSH', sessionLabel, asked = '', answered = '' }) {
+export function formatTurnEnd({ session, reason, label = 'DSH', sessionLabel, workspaceLabel = '', asked = '', answered = '' }) {
   const { shortId, project, title } = sessionFacts(session)
   const status = TURN_STATUS[reason?.kind] ?? '已结束'
   const detail = reason?.kind === 'error' ? condense(String(reason.error?.message ?? '')) : ''
@@ -152,6 +155,7 @@ export function formatTurnEnd({ session, reason, label = 'DSH', sessionLabel, as
     task === '' ? `【${label}】一轮回答结束` : `【${label}】${task}`,
     `状态：${detail === '' ? status : `${status}：${detail}`}`,
     `会话：${sessionLabel ?? fallbackLabel(title, project, shortId)}`,
+    `工作区：${workspaceLabel === '' ? UNGROUPED : workspaceLabel}`,
     ...reply === '' ? [] : [`回答：${reply}`],
   ].join('\n')
 }

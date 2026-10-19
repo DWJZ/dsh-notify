@@ -192,6 +192,7 @@ observe(running('问候', false))
 const cut = shown.at(-1)
 check('the request keeps its budget', cut.title.length === 70 && cut.title.endsWith('…'), String(cut.title.length))
 check('the reply keeps its budget', cut.body.split('\n')[1].length === 140, String(cut.body.split('\n')[1].length))
+check('and the body names the Workspace', cut.body.includes('workspace=ungrouped'), cut.body.slice(0, 120))
 
 console.log('a focused window still hears about the Session it is not showing')
 documentStub.focused = true
