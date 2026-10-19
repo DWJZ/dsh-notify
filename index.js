@@ -171,6 +171,11 @@ export function apply(ctx, raw, deps = {}) {
   // path. With answering configured that path is the only one left — the webhook is
   // deliberately blanked above, and announcing through it would duplicate every
   // approval — so the notice gets its own bot delivery instead of sharing `channels`.
+  // What the browser reported about the window and the Session it shows. A turn the person
+  // is looking at must not also pop up on the phone, so the two notices share one decision.
+  const presence = { focused: false, shown: '', reported: false }
+  /** Whether the next turn notice is redundant: in front, on that very Session. */
+  const redundantTurn = (sessionId) => presence.focused === true && presence.shown === String(sessionId)
   const turnChannels = deps.turnChannels ?? (config.answering
     ? [{
         name: 'discord-bot',
@@ -182,6 +187,24 @@ export function apply(ctx, raw, deps = {}) {
         }),
       }]
     : channels)
+  /**
+   * Turn delivery that matches the browser.
+   *
+   * @param sessionId - the Session whose turn just ended.
+   * @returns channels that speak only when the browser would also speak.
+   */
+  const turnDelivery = (sessionId) => {
+    const redundant = redundantTurn(sessionId)
+    if (deps.turnChannels !== undefined) return turnChannels
+    if (config.answering) return [{ ...turnChannels[0], deliver: (text) => postAsBot({
+      token: config.discordBotToken,
+      channelId: config.discordChannelId,
+      text,
+      silent: redundant,
+    }) }]
+    // A webhook cannot be silenced per message, so a redundant turn is simply not posted.
+    return redundant ? [] : turnChannels
+  }
   const shouldAnnounce = createAnnouncer({ ttlMs: config.ttlMs, minGapMs: config.minGapMs })
   /** Pending decisions by correlation code; a question entry owns its own progress. */
   const pending = new Map()
@@ -601,7 +624,7 @@ export function apply(ctx, raw, deps = {}) {
       if (event?.type !== 'turn/end') return
       if (selfDriven.get(id) === true) return
       try {
-        deliverTo(turnChannels, formatTurnEnd({
+        deliverTo(turnDelivery(id), formatTurnEnd({
           session,
           reason: event.data?.reason,
           label: config.label,
@@ -614,6 +637,29 @@ export function apply(ctx, raw, deps = {}) {
       }
     })
   }
+
+  // The browser is the only party that knows what a person can already see, so it reports
+  // presence here and the Host applies that answer to the Discord notice. Same-origin and
+  // loopback only, like every other local control route.
+  ctx.inject(['webServer'], (webCtx) => {
+    webCtx.effect(() => webCtx.webServer.register({
+      method: 'POST',
+      path: '/dsh-notify/presence',
+      handler: (request) => {
+        const host = String(request.headers.host ?? '')
+        const origin = request.headers.origin
+        if (typeof origin === 'string' && origin !== '' && new URL(origin).host !== host) {
+          return { status: 403, body: 'cross-origin' }
+        }
+        let payload
+        try { payload = JSON.parse(request.body ?? '{}') } catch { return { status: 400, body: 'invalid json' } }
+        presence.focused = payload?.focused === true
+        presence.shown = typeof payload?.shown === 'string' ? payload.shown : ''
+        presence.reported = true
+        return { status: 200, body: JSON.stringify({ ok: true }) }
+      },
+    }), 'dsh-notify: browser presence')
+  })
 
   ctx.on('user-questions/request', (request, next) => {
     const delegated = next()

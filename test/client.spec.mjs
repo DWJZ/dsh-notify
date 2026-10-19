@@ -36,8 +36,13 @@ class FakeNotification {
 const windowStub = {
   __ModuleLoader__: { load: (spec) => { windowStub.spec = spec } },
   focus: () => { focused = true },
+  // The presence report listens for focus/blur; these specs only need the registration.
+  addEventListener: () => {},
+  removeEventListener: () => {},
 }
 const documentStub = {
+  addEventListener: () => {},
+  removeEventListener: () => {},
   visibilityState: 'hidden',
   focused: false,
   hasFocus() { return this.focused },

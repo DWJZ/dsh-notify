@@ -64,6 +64,9 @@ const ctx = {
     return () => {}
   },
   get: () => undefined,
+  inject: () => {},
+  // The presence route mounts on the web host; these specs exercise the event paths.
+  inject: () => {},
   listeners: [],
 }
 const channel = { name: 'test', deliver: text => { delivered.push(text); return { ok: true } } }
@@ -89,9 +92,62 @@ ctx.listeners[0](session, { type: 'user/message', data: { content: [{ type: 'tex
 ctx.listeners[0](session, { type: 'turn/end', data: { turn: 3, reason: { kind: 'completed' } } })
 check('and the next turn a person started speaks again', delivered.length === 2, JSON.stringify(delivered))
 
-const quiet = { logger: { info: () => {}, warn: () => {} }, on: (name, listener) => { if (name === 'session/event') quiet.listeners.push(listener); return () => {} }, get: () => undefined, listeners: [] }
+const quiet = { logger: { info: () => {}, warn: () => {} }, on: (name, listener) => { if (name === 'session/event') quiet.listeners.push(listener); return () => {} }, get: () => undefined, inject: () => {}, listeners: [] }
 apply(quiet, { discordWebhookUrl: 'https://example.test/hook', turnNotify: false }, { channels: [channel] })
 check('turning the switch off removes the listener', quiet.listeners.length === 0)
+
+// The browser is the only witness of what a person can already see; its report decides
+// whether the Discord notice speaks.
+console.log('the Discord notice follows the browser')
+{
+  const calls = []
+  const realFetch = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), body: String(init?.body ?? '') })
+    return new Response(JSON.stringify({ id: '1' }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  const routes = []
+  const following = {
+    logger: { info: () => {}, warn: () => {} },
+    on: (name, listener) => { if (name === 'session/event') following.listeners.push(listener); return () => {} },
+    get: () => undefined,
+    listeners: [],
+    inject: (_names, factory) => factory({ effect: (create) => create(), webServer: { register: (route) => { routes.push(route); return () => {} } } }),
+  }
+  try {
+    apply(following, {
+      discordWebhookUrl: 'https://example.test/hook',
+      discordBotToken: 'bot-token',
+      discordChannelId: 'channel-id',
+      discordAllowedUserId: 'user-id',
+      turnNotify: true,
+    })
+    const presence = routes.find(route => route.path === '/dsh-notify/presence')
+    check('the browser has a route to report presence', presence !== undefined, JSON.stringify(routes.map(route => route.path)))
+    const answered = presence.handler({ headers: { host: '127.0.0.1:3080' }, body: JSON.stringify({ focused: true, shown: String(session.id) }) })
+    check('a same-origin report is accepted', answered.status === 200, JSON.stringify(answered))
+
+    const turn = async () => {
+      calls.length = 0
+      following.listeners.at(-1)(session, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } })
+      await new Promise((resolve) => { setTimeout(resolve, 60) })
+      return calls.map(call => call.body).join('\n')
+    }
+
+    const inFront = await turn()
+    check('a turn the person is watching is delivered without a Discord popup',
+      inFront.includes(`"flags":${String(1 << 12)}`), inFront.slice(-80))
+
+    presence.handler({ headers: { host: '127.0.0.1:3080' }, body: JSON.stringify({ focused: true, shown: 'another-session' }) })
+    const elsewhere = await turn()
+    check('and another Session still speaks', !elsewhere.includes(`"flags":${String(1 << 12)}`), elsewhere.slice(-80))
+
+    const crossed = presence.handler({ headers: { host: '127.0.0.1:3080', origin: 'https://evil.example' }, body: '{}' })
+    check('a cross-origin report is refused', crossed.status === 403, JSON.stringify(crossed))
+  } finally {
+    globalThis.fetch = realFetch
+  }
+}
 
 // With answering configured the webhook is blanked on purpose, so a notice that
 // shared the announce channels would go nowhere: the regression this covers.
@@ -107,6 +163,7 @@ try {
     logger: { info: () => {}, warn: () => {} },
     on: (name, listener) => { if (name === 'session/event') answering.listeners.push(listener); return () => {} },
     get: () => undefined,
+    inject: () => {},
     listeners: [],
   }
   apply(answering, {
@@ -125,8 +182,9 @@ try {
   check('and it carries the finished-turn text', (posted[0]?.body ?? '').includes('一轮回答结束'), (posted[0]?.body ?? '').slice(0, 80))
   // One notice per turn is a running commentary: it belongs in the channel, but it
   // must not raise a notification the way an approval does.
-  check('and asks Discord to deliver it without notifying',
-    (posted[0]?.body ?? '').includes(`"flags":${String(1 << 12)}`), (posted[0]?.body ?? '').slice(-60))
+  // Nothing reported presence, so the notice is not known to be redundant: it speaks.
+  check('and lets Discord notify when the window never said it was watching',
+    !(posted[0]?.body ?? '').includes(`"flags":${String(1 << 12)}`), (posted[0]?.body ?? '').slice(-60))
 } finally {
   globalThis.fetch = realFetch
 }
